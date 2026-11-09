@@ -18,6 +18,10 @@
     <li>ceteam.combatextended</li>
     <li>ceteam.combatextendedarmory</li>
     <li>moistestwhale.gitscyberbrains</li>
+    <li>smashphil.vehicleframework</li>
+    <li>oskarpotocki.vanillavehiclesexpanded</li>
+    <li>vanillaexpanded.vfesecurity</li>
+    <li>aoba.fortress.industrial</li>
   </loadAfter>
   <incompatibleWith>
     <li>unlimitedthreatscale.1trickpwnyta</li>
@@ -29,6 +33,8 @@
 - Dotation uniforme par raid (mêmes armes, mêmes munitions), dans les tables d'objets de la faction.
 - Vagues : 100 raiders max (industriel+), 300 (néolithique/médiéval).
 - IA : stratégies smart/brèche/sape plus fréquentes à haut palier, les vétérans évitent les tourelles.
+- Sièges renforcés : artillerie des mods (Fortifications, VFE Security, CE Armory...), tranchées, tourelles.
+- Véhicules ennemis (Vehicle Framework + VVE, expérimental) : blindés avec équipage, munitions et carburant.
 
-Compatible Combat Extended et GiTS Cyberbrains.</description>
+Compatible Combat Extended, GiTS Cyberbrains, Vehicle Framework / VVE, Fortifications, VFE Security.</description>
 </ModMetaData>

@@ -17,6 +17,7 @@ namespace HardenedRaids
             RaidContext.Parms = parms;
             RaidContext.DebugTest = debugTest;
             RaidContext.PreAdjustPoints = -1f;
+            RaidContext.PendingVehicles = null;
         }
 
         public static void Finalizer(bool __state)
@@ -25,6 +26,7 @@ namespace HardenedRaids
             RaidContext.Parms = null;
             RaidContext.DebugTest = false;
             RaidContext.PreAdjustPoints = -1f;
+            RaidContext.PendingVehicles = null;
         }
     }
 

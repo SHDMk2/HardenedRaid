@@ -26,6 +26,12 @@ namespace HardenedRaids
                 {
                     RaidPlan plan = RaidPlan.Make(f.def, p, null, null, false, rng);
                     sb.AppendLine(plan == null ? $"{p:F0} pts : vanilla" : plan.Describe());
+                    if (plan != null && HRSettings.EnableVehicles && VehicleGate.Active && f.def.techLevel >= TechLevel.Industrial)
+                    {
+                        var v = VehicleCompat.Plan(f, p, plan.tierX, rng, out float cost);
+                        if (v.Count > 0)
+                            sb.AppendLine($"   [véhicules, si arrivée à pied] {string.Join(", ", v.Select(d => d.label))} ({cost:F0} pts retirés à l'infanterie)");
+                    }
                 }
             }
             Log.Message(sb.ToString());

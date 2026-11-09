@@ -12,6 +12,8 @@ dotnet build -c Release
 
 La DLL sort directement dans `Assemblies/`. Références : `Krafs.Rimworld.Ref 1.7.5000-unstable`
 (même build que le jeu) et `Lib.Harmony` (fourni à l'exécution par le mod Harmony, non copié).
+`Vehicles.dll` / `SmashTools.dll` sont référencés depuis le Workshop (Vehicle Framework, id 3014915404) ;
+autre emplacement : `dotnet build -c Release -p:VFDir=/chemin/vers/Assemblies`.
 
 ## Structure
 
@@ -26,4 +28,6 @@ La DLL sort directement dans `Assemblies/`. Références : `Krafs.Rimworld.Ref 1
 | `CECompat.cs` | munitions Combat Extended (par réflexion, optionnel) |
 | `Waves.cs` | vagues différées (GameComponent sauvegardé) |
 | `AIPatches.cs` | poids des stratégies smart/brèche/sape, grille d'évitement des tourelles |
+| `SiegePatches.cs` | camps de siège : artillerie des mods, tranchées/sandbags, tourelles autonomes |
+| `VehicleCompat.cs` | véhicules ennemis via Vehicle Framework (seule classe qui touche aux types VF) |
 | `DebugActions.cs` | mode dev → « Hardened Raids » → aperçu des plans / vagues en attente |

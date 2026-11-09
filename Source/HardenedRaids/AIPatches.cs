@@ -24,6 +24,7 @@ namespace HardenedRaids
                 case "ImmediateAttackBreaching": __result *= 1f + 2f * s; break;
                 case "ImmediateAttackBreachingSmart": __result *= 1f + 3f * s; break;
                 case "ImmediateAttackSappers": __result *= 1f + 1.5f * s; break;
+                case "Siege": __result *= 1f + 1.5f * s; break;
             }
         }
     }

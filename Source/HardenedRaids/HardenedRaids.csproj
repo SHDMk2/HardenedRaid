@@ -27,4 +27,19 @@
     </PackageReference>
   </ItemGroup>
 
+  <!-- Vehicle Framework (optionnel à l'exécution : utilisé uniquement si le mod est actif) -->
+  <PropertyGroup>
+    <VFDir Condition="'$(VFDir)' == ''">$(HOME)/.local/share/Steam/steamapps/workshop/content/294100/3014915404/1.6/Assemblies</VFDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Vehicles">
+      <HintPath>$(VFDir)/Vehicles.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="SmashTools">
+      <HintPath>$(VFDir)/SmashTools.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
 </Project>

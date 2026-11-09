@@ -111,6 +111,7 @@ namespace HardenedRaids
         public static bool DebugTest;
         public static float PreAdjustPoints = -1f;
         public static WaveEntry PendingWave;
+        public static List<ThingDef> PendingVehicles; // véhicules achetés pour ce raid, apparus après l'arrivée
     }
 
     public static class RaidGenerator
@@ -137,7 +138,28 @@ namespace HardenedRaids
             WaveEntry wave = RaidContext.PendingWave;
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out Func<PawnKindDef, bool> isRequired);
             var rng = new System.Random(Rand.Int);
-            RaidPlan plan = RaidPlan.Make(parms.faction.def, parms.points, wave?.tierX, wave?.count, needBreacher, rng);
+            float tierX = wave?.tierX ?? Tiers.TierX(parms.faction.def, parms.points);
+            if (tierX < 1f) return false;
+
+            // ---- véhicules (partie 2) : achetés sur le budget du raid, avant l'infanterie
+            float infantryPoints = parms.points;
+            List<ThingDef> vehicles = null;
+            if (HRSettings.EnableVehicles && VehicleGate.Active && !RaidContext.DebugTest && VehicleGate.ArrivalOk(RaidContext.Parms?.raidArrivalMode)
+                && parms.faction.def.techLevel >= TechLevel.Industrial)
+            {
+                try
+                {
+                    vehicles = VehicleCompat.Plan(parms.faction, parms.points, tierX, rng, out float vCost);
+                    if (wave == null) infantryPoints = Mathf.Max(parms.points * 0.5f, parms.points - vCost);
+                }
+                catch (Exception e)
+                {
+                    Log.Warning("[Hardened Raids] choix des véhicules : " + e.Message);
+                    vehicles = null;
+                }
+            }
+
+            RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, needBreacher, rng);
             if (plan == null) return false;
 
             // ---- choix des pawnkinds (on respecte les règles vanilla : chef unique, pawns requis par la stratégie, xénotypes)
@@ -196,8 +218,10 @@ namespace HardenedRaids
                 outPawns.Add(pawn);
             }
 
+            if (vehicles != null && vehicles.Count > 0 && outPawns.Count > 0) RaidContext.PendingVehicles = vehicles;
             HRLog.Msg((wave != null ? $"vague {wave.index}/{wave.totalWaves} — " : "") + plan.Describe() +
-                      $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}");
+                      $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}" +
+                      (vehicles != null && vehicles.Count > 0 ? $", véhicules : {string.Join(", ", vehicles.Select(v => v.label))}" : ""));
             return outPawns.Count > 0;
         }
 
