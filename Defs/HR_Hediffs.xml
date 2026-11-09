@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <!-- Marqueur invisible : palier d'un raider (sert à l'IA) -->
+  <HediffDef>
+    <defName>HR_RaiderTier</defName>
+    <label>hardened raider</label>
+    <description>Internal marker used by Hardened Raids.</description>
+    <hediffClass>HediffWithComps</hediffClass>
+    <isBad>false</isBad>
+    <everCurableByItem>false</everCurableByItem>
+    <initialSeverity>1</initialSeverity>
+    <maxSeverity>10</maxSeverity>
+    <stages>
+      <li>
+        <becomeVisible>false</becomeVisible>
+      </li>
+    </stages>
+  </HediffDef>
+</Defs>

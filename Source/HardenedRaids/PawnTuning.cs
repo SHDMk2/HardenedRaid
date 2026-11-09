@@ -1,0 +1,159 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using HarmonyLib;
+using RimWorld;
+using UnityEngine;
+using Verse;
+
+namespace HardenedRaids
+{
+    [DefOf]
+    public static class HRDefOf
+    {
+        public static HediffDef HR_RaiderTier;
+        static HRDefOf() => DefOfHelper.EnsureInitializedInCtor(typeof(HRDefOf));
+    }
+
+    public static class PawnTuning
+    {
+        private static readonly MethodInfo installPart = AccessTools.Method(typeof(PawnTechHediffsGenerator), "InstallPart");
+
+        // ------------------------------------------------------------ santé
+        public static void CleanHealth(Pawn pawn)
+        {
+            List<Hediff> list = pawn.health.hediffSet.hediffs.ToList();
+            foreach (Hediff h in list)
+            {
+                bool remove =
+                    (h is Hediff_Injury inj && inj.IsPermanent()) ||
+                    (h is Hediff_MissingPart mp && mp.Part != null && !pawn.health.hediffSet.PartOrAnyAncestorHasDirectlyAddedParts(mp.Part)) ||
+                    h.def.chronic ||
+                    h is Hediff_Addiction;
+                if (remove) pawn.health.RemoveHediff(h);
+            }
+        }
+
+        // ------------------------------------------------------------ implants
+        public static void InstallImplants(Pawn pawn, Slot s)
+        {
+            if (installPart == null) return;
+            var parts = Loadouts.PickImplants(s.faction.def, s.tier, s.rng);
+            ThingDef brain = Loadouts.PickCyberbrain(s.tier.cyberbrainRank);
+            if (brain != null && !Tiers.IsLowTech(s.faction.def)) parts.Add(brain);
+            foreach (ThingDef d in parts)
+            {
+                try
+                {
+                    installPart.Invoke(null, new object[] { pawn, d });
+                }
+                catch (Exception e)
+                {
+                    HRLog.Msg($"implant {d.defName} impossible sur {pawn} : {e.InnerException?.Message ?? e.Message}");
+                }
+            }
+        }
+
+        // ------------------------------------------------------------ skills
+        public static void ApplySkills(Pawn pawn, Slot s)
+        {
+            if (pawn.skills == null || !s.tier.healthy) return;
+            bool melee = pawn.equipment?.Primary == null ? s.role == Role.Melee : pawn.equipment.Primary.def.IsMeleeWeapon;
+            SkillDef main = melee ? SkillDefOf.Melee : SkillDefOf.Shooting;
+            SkillDef other = melee ? SkillDefOf.Shooting : SkillDefOf.Melee;
+            Raise(pawn, main, s.rng.Next(s.tier.combatSkill.min, s.tier.combatSkill.max + 1));
+            Raise(pawn, other, Mathf.Max(0, s.tier.combatSkill.min - 4));
+        }
+
+        private static void Raise(Pawn pawn, SkillDef def, int level)
+        {
+            SkillRecord r = pawn.skills.GetSkill(def);
+            if (r == null || r.TotallyDisabled) return;
+            if (r.Level < level) r.Level = Mathf.Min(20, level);
+        }
+
+        // ------------------------------------------------------------ marqueur invisible (IA)
+        public static void Mark(Pawn pawn, int tierIndex)
+        {
+            if (HRDefOf.HR_RaiderTier == null || tierIndex <= 0) return;
+            Hediff h = HediffMaker.MakeHediff(HRDefOf.HR_RaiderTier, pawn);
+            h.Severity = tierIndex;
+            pawn.health.AddHediff(h);
+        }
+
+        public static int TierOf(Pawn pawn)
+        {
+            Hediff h = pawn.health?.hediffSet?.GetFirstHediffOfDef(HRDefOf.HR_RaiderTier);
+            return h == null ? 0 : Mathf.RoundToInt(h.Severity);
+        }
+
+        // ------------------------------------------------------------ équipement
+        public static QualityCategory RollQuality(Slot s)
+        {
+            QualityCategory q = s.tier.quality;
+            if (s.rng.NextDouble() < s.tier.legendaryChance && q < QualityCategory.Legendary) q++;
+            return q;
+        }
+
+        public static void FinishGear(Thing t, Pawn pawn, Slot s)
+        {
+            PawnGenerator.PostProcessGeneratedGear(t, pawn);
+            t.TryGetComp<CompQuality>()?.SetQuality(RollQuality(s), ArtGenerationContext.Outsider);
+            if (t.def.useHitPoints) t.HitPoints = t.MaxHitPoints;
+        }
+
+        /// <returns>false si rien n'a pu être porté (on laisse alors vanilla faire)</returns>
+        public static bool WearLoadout(Pawn pawn, Slot s)
+        {
+            if (s.loadout.apparel.Count == 0) return false;
+            pawn.apparel.DestroyAll();
+            int worn = 0;
+            foreach (ThingStuffPair p in s.loadout.apparel)
+            {
+                if (!p.thing.apparel.PawnCanWear(pawn) || !ApparelUtility.HasPartsToWear(pawn, p.thing)) continue;
+                if (!pawn.apparel.CanWearWithoutDroppingAnything(p.thing)) continue;
+                var ap = (Apparel)ThingMaker.MakeThing(p.thing, p.stuff);
+                FinishGear(ap, pawn, s);
+                pawn.apparel.Wear(ap, dropReplacedApparel: false);
+                worn++;
+            }
+            if (worn > 0) AddWarmthIfNeeded(pawn, s);
+            return worn > 0;
+        }
+
+        private static void AddWarmthIfNeeded(Pawn pawn, Slot s)
+        {
+            if (RaidContext.Parms?.target is not Map map) return;
+            float outdoor = map.mapTemperature.OutdoorTemp;
+            float comfy = pawn.GetStatValue(StatDefOf.ComfyTemperatureMin);
+            float missing = comfy - outdoor;
+            if (missing <= 5f) return;
+            ThingStuffPair? warm = Loadouts.BestWarmLayer(Loadouts.TablesFor(s.faction.def), pawn, missing);
+            if (!warm.HasValue) return;
+            var ap = (Apparel)ThingMaker.MakeThing(warm.Value.thing, warm.Value.stuff);
+            FinishGear(ap, pawn, s);
+            pawn.apparel.Wear(ap, dropReplacedApparel: false);
+        }
+
+        public static bool EquipWeapon(Pawn pawn, Slot s)
+        {
+            Role role = s.role;
+            bool cannotShoot = pawn.WorkTagIsDisabled(WorkTags.Shooting) || (pawn.story?.traits?.HasTrait(TraitDefOf.Brawler) ?? false);
+            if (cannotShoot) role = Role.Melee;
+            ThingStuffPair? w = s.loadout.WeaponFor(role);
+            if (!w.HasValue) return false;
+            ThingDef def = w.Value.thing;
+            if (cannotShoot && def.IsRangedWeapon) return false;
+            if (pawn.genes?.Xenotype?.forbiddenWeaponClasses != null && def.weaponClasses != null &&
+                pawn.genes.Xenotype.forbiddenWeaponClasses.Any(def.weaponClasses.Contains)) return false;
+
+            pawn.equipment.DestroyAllEquipment();
+            var thing = (ThingWithComps)ThingMaker.MakeThing(def, w.Value.stuff);
+            FinishGear(thing, pawn, s);
+            if (pawn.Ideo != null && thing.TryGetComp<CompEquippable>() != null) thing.StyleDef = pawn.Ideo.GetStyleFor(thing.def);
+            pawn.equipment.AddEquipment(thing);
+            return true;
+        }
+    }
+}
