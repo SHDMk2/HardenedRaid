@@ -130,6 +130,8 @@ namespace HardenedRaids
             Slot s = GenContext.For(pawn);
             if (s == null || !s.tier.healthy) return;
             CECompat.EnsureAmmo(pawn);
+            try { PawnTuning.DropBlockingApparel(pawn); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] contrôle bouclier/arme de " + pawn + " : " + e.Message); }
         }
     }
 }

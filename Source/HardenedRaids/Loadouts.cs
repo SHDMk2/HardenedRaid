@@ -20,7 +20,12 @@ namespace HardenedRaids
     public class Loadout
     {
         public List<ThingStuffPair> apparel = new List<ThingStuffPair>();
+        /// <summary>Dotation d'assaut (boucliers, armures à bouclier) pour les rôles brèche / corps à corps.</summary>
+        public Dictionary<Role, List<ThingStuffPair>> roleApparel = new Dictionary<Role, List<ThingStuffPair>>();
         public Dictionary<Role, ThingStuffPair?> weapons = new Dictionary<Role, ThingStuffPair?>();
+
+        public List<ThingStuffPair> ApparelFor(Role r) =>
+            roleApparel.TryGetValue(r, out var l) && l != null && l.Count > 0 ? l : apparel;
 
         public ThingStuffPair? WeaponFor(Role r)
         {
@@ -36,7 +41,9 @@ namespace HardenedRaids
             var parts = new List<string>();
             foreach (Role r in Enum.GetValues(typeof(Role)))
                 if (weapons.TryGetValue(r, out var w) && w.HasValue) parts.Add($"{r}={Label(w.Value)}");
-            return $"armure: {ap} | armes: {string.Join(", ", parts)}";
+            string assault = string.Join(" ; ", roleApparel.Where(kv => kv.Value != null && kv.Value.Count > 0)
+                .Select(kv => $"{kv.Key}: {string.Join(", ", kv.Value.Select(Label))}"));
+            return $"armure: {ap}" + (assault.Length > 0 ? $" | assaut: {assault}" : "") + $" | armes: {string.Join(", ", parts)}";
         }
 
         public static string Label(ThingStuffPair p) => p.stuff != null ? $"{p.thing.label} ({p.stuff.label})" : p.thing.label;
@@ -102,9 +109,34 @@ namespace HardenedRaids
             if (d.apparel == null) return false;
             if (!d.apparel.developmentalStageFilter.Has(DevelopmentalStage.Adult)) return false;
             if (!d.apparel.CorrectGenderForWearing(Gender.Male) || !d.apparel.CorrectGenderForWearing(Gender.Female)) return false;
-            if (d.HasComp(typeof(CompShield))) return false;                       // ceintures bouclier : incompatibles avec le tir
-            if (d.thingClass != null && d.thingClass.Name.Contains("Shield")) return false; // boucliers CE
             return true;
+        }
+
+        // ---------------------------------------------------------------- boucliers
+        /// <summary>Bouclier CE (Apparel_Shield) : seulement avec une arme à une main.</summary>
+        public static bool IsCEShield(ThingDef d) => d.thingClass != null && d.thingClass.Name == "Apparel_Shield";
+
+        /// <summary>Équipement « bouclier » : ceinture bouclier vanilla, bouclier CE, armure à bouclier VEF (siegebreaker...).
+        /// Réservé aux rôles brèche / corps à corps.</summary>
+        public static bool IsShieldGear(ThingDef d) =>
+            IsCEShield(d) || (d.comps != null && d.comps.Any(c => c?.compClass != null && c.compClass.Name.Contains("Shield")));
+
+        private static bool OneHanded(ThingDef w) => w.weaponTags != null && w.weaponTags.Contains("CE_OneHandedWeapon");
+
+        /// <summary>L'objet empêche-t-il d'utiliser cette arme ? (à vérifier aussi au porté par Apparel.AllowVerbCast)</summary>
+        public static bool BlocksWeapon(ThingDef ap, ThingDef weapon)
+        {
+            if (weapon == null) return false;
+            if (IsCEShield(ap)) return !OneHanded(weapon);
+            if (!weapon.IsRangedWeapon) return false;
+            if (ap.IsShieldThatBlocksRanged) return true;
+            if (ap.comps != null)
+                foreach (CompProperties c in ap.comps)
+                {
+                    var f = c?.GetType().GetField("dontAllowRangedAttack"); // VEF CompProperties_ShieldBubble
+                    if (f != null && f.FieldType == typeof(bool) && (bool)f.GetValue(c)) return true;
+                }
+            return false;
         }
 
         private static bool WeaponAllowed(ThingDef d)
@@ -142,28 +174,92 @@ namespace HardenedRaids
             return p.thing.equippedStatOffsets.GetStatOffsetFromList(carryBulk);
         }
 
-        public static List<ThingStuffPair> BuildApparelSet(FactionTables t, float budget, Random rng)
+        private static readonly HashSet<string> GenericWords = new HashSet<string>
+        {
+            "armor", "armour", "helmet", "helm", "suit", "vest", "jacket", "set", "the", "of", "a", "heavy", "light", "combat", "gear", "hat", "mask", "pants"
+        };
+
+        private static HashSet<string> NameTokens(ThingDef d) =>
+            new HashSet<string>((d.label ?? d.defName).ToLowerInvariant().Split(new[] { ' ', '-', '(', ')', ',' }, StringSplitOptions.RemoveEmptyEntries)
+                .Where(w => w.Length > 2 && !GenericWords.Contains(w)));
+
+        /// <summary>0 = rien en commun, 1 = même panoplie (tag "...Set" commun, ou même nom : marine armor / marine helmet).</summary>
+        public static float SetMatch(ThingDef body, ThingDef helmet)
+        {
+            List<string> ta = body.apparel?.tags, tb = helmet.apparel?.tags;
+            if (ta != null && tb != null && ta.Any(t => t.EndsWith("Set", StringComparison.OrdinalIgnoreCase) && tb.Contains(t))) return 1f;
+            HashSet<string> a = NameTokens(body), b = NameTokens(helmet);
+            if (a.Count == 0 || b.Count == 0) return 0f;
+            int shared = a.Count(b.Contains);
+            if (shared == 0) return 0f;
+            return 0.5f + 0.5f * shared / Math.Max(a.Count, b.Count);   // "prestige marine" préfère "prestige marine helmet" à "marine helmet"
+        }
+
+        private static bool IsBodyArmor(ThingDef d) =>
+            d.apparel.bodyPartGroups.Contains(BodyPartGroupDefOf.Torso) && (d.apparel.layers.Contains(ApparelLayerDefOf.Shell) || d.apparel.layers.Contains(ApparelLayerDefOf.Middle));
+
+        private static bool IsHelmet(ThingDef d) =>
+            d.apparel.layers.Contains(ApparelLayerDefOf.Overhead) &&
+            (d.apparel.bodyPartGroups.Contains(BodyPartGroupDefOf.FullHead) || d.apparel.bodyPartGroups.Contains(BodyPartGroupDefOf.UpperHead));
+
+        /// <param name="shields">false : aucun équipement bouclier ; true : autorisés s'ils ne gênent pas <paramref name="weapon"/>.</param>
+        public static List<ThingStuffPair> BuildApparelSet(FactionTables t, float budget, Random rng, bool shields = false, ThingDef weapon = null)
         {
             var set = new List<ThingStuffPair>();
             if (apparelPairs == null) return set;
-            List<ThingStuffPair> cands = apparelPairs.Where(p => p.Price <= budget && Intersects(p.thing.apparel.tags, t.apparelTags)).ToList();
+            List<ThingStuffPair> cands = apparelPairs.Where(p => p.Price <= budget && Intersects(p.thing.apparel.tags, t.apparelTags)
+                                                                 && (shields ? !BlocksWeapon(p.thing, weapon) : !IsShieldGear(p.thing))).ToList();
             if (cands.Count == 0) return set;
             float left = budget;
+            var jitter = new Dictionary<ThingStuffPair, float>();
+            float J(ThingStuffPair p)
+            {
+                if (!jitter.TryGetValue(p, out float j)) jitter[p] = j = 0.95f + 0.1f * (float)rng.NextDouble();
+                return ApparelScore(p) * j;
+            }
+            bool Fits(ThingStuffPair p) => p.Price <= left && !set.Any(s => s.thing == p.thing || !ApparelUtility.CanWearTogether(s.thing, p.thing, BodyDefOf.Human));
 
             // 1. Combat Extended : un équipement de portage (gilet tactique / sac) pour les munitions
             if (carryBulk != null)
             {
-                ThingStuffPair? carry = cands.Where(p => CarryScore(p) > 0f && p.Price <= budget * 0.25f)
+                ThingStuffPair? carry = cands.Where(p => CarryScore(p) > 0f && p.Price <= budget * 0.25f && !IsShieldGear(p.thing))
                     .OrderByDescending(CarryScore).Cast<ThingStuffPair?>().FirstOrDefault();
                 if (carry.HasValue) { set.Add(carry.Value); left -= carry.Value.Price; }
             }
 
-            // 2. Glouton : la meilleure protection d'abord, en restant compatible avec ce qui est déjà choisi
-            foreach (ThingStuffPair p in cands.Where(p => !p.thing.apparel.layers.Contains(ApparelLayerDefOf.Belt))
-                         .OrderByDescending(p => ApparelScore(p) * (0.95f + 0.1f * (float)rng.NextDouble())))
+            // 2. Armure + casque choisis ensemble : le casque de la même panoplie s'il existe dans les tables de la faction
+            List<ThingStuffPair> helmets = cands.Where(p => IsHelmet(p.thing)).ToList();
+            ThingStuffPair? bestBody = null, bestHelmet = null;
+            float bestScore = 0f;
+            foreach (ThingStuffPair b in cands.Where(p => IsBodyArmor(p.thing) && !p.thing.apparel.layers.Contains(ApparelLayerDefOf.Belt) && Fits(p))
+                         .OrderByDescending(J).Take(20))
             {
-                if (p.Price > left) continue;
-                if (set.Any(s => s.thing == p.thing || !ApparelUtility.CanWearTogether(s.thing, p.thing, BodyDefOf.Human))) continue;
+                float rest = left - b.Price;
+                List<ThingStuffPair> ok = helmets.Where(h => h.Price <= rest && h.thing != b.thing && ApparelUtility.CanWearTogether(b.thing, h.thing, BodyDefOf.Human)
+                                                              && !set.Any(s => !ApparelUtility.CanWearTogether(s.thing, h.thing, BodyDefOf.Human))).ToList();
+                ThingStuffPair? h = null;
+                float match = 0f;
+                if (ok.Count > 0)
+                {
+                    match = ok.Max(x => SetMatch(b.thing, x.thing));
+                    float m = match;
+                    h = (m > 0f ? ok.Where(x => SetMatch(b.thing, x.thing) >= m) : ok)
+                        .OrderByDescending(x => J(x) + (b.stuff != null && x.stuff == b.stuff ? 0.01f : 0f)).First();
+                }
+                float score = (J(b) + (h.HasValue ? J(h.Value) : 0f)) * (1f + 0.15f * match) * (h.HasValue ? 1f : 0.8f);
+                if (bestBody == null || score > bestScore) { bestBody = b; bestHelmet = h; bestScore = score; }
+            }
+            if (bestBody.HasValue)
+            {
+                set.Add(bestBody.Value); left -= bestBody.Value.Price;
+                if (bestHelmet.HasValue) { set.Add(bestHelmet.Value); left -= bestHelmet.Value.Price; }
+            }
+
+            // 3. Glouton : le reste, meilleure protection d'abord, en restant compatible avec ce qui est déjà choisi
+            foreach (ThingStuffPair p in cands.Where(p => !p.thing.apparel.layers.Contains(ApparelLayerDefOf.Belt) || (shields && IsShieldGear(p.thing)))
+                         .OrderByDescending(p => J(p) + (shields && IsShieldGear(p.thing) ? 1000f : 0f)))
+            {
+                if (!Fits(p)) continue;
                 set.Add(p);
                 left -= p.Price;
             }
@@ -210,7 +306,6 @@ namespace HardenedRaids
         {
             FactionTables t = TablesFor(f);
             var lo = new Loadout();
-            lo.apparel = BuildApparelSet(t, tier.apparelBudget, rng);
             float wb = tier.weaponBudget;
             lo.weapons[Role.Main] = PickTop(WeaponCands(t, wb, d => d.IsRangedWeapon && !IsDestructive(d) && !IsHeavy(d) && !IsSniper(d) && !IsGrenadeOrSingleUse(d)), rng);
             lo.weapons[Role.Melee] = PickTop(WeaponCands(t, wb, d => d.IsMeleeWeapon && !IsDestructive(d)), rng);
@@ -228,6 +323,17 @@ namespace HardenedRaids
             {
                 // faction sans arme à distance dans ses tables : on reste au corps à corps
                 lo.weapons[Role.Main] = lo.weapons[Role.Melee];
+            }
+
+            // Armure : tireurs sans aucun bouclier ; brèche / corps à corps peuvent prendre boucliers et armures à bouclier
+            lo.apparel = BuildApparelSet(t, tier.apparelBudget, rng);
+            foreach (Role r in new[] { Role.Breacher, Role.Melee })
+            {
+                if (r == Role.Breacher && !lo.weapons.ContainsKey(Role.Breacher)) continue;
+                if (r == Role.Melee && tier.meleeShare <= 0f) continue;
+                ThingDef w = lo.WeaponFor(r)?.thing;
+                List<ThingStuffPair> assault = BuildApparelSet(t, tier.apparelBudget, rng, shields: true, weapon: w);
+                if (assault.Any(p => IsShieldGear(p.thing))) lo.roleApparel[r] = assault;
             }
             return lo;
         }

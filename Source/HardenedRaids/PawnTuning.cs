@@ -106,10 +106,11 @@ namespace HardenedRaids
         /// <returns>false si rien n'a pu être porté (on laisse alors vanilla faire)</returns>
         public static bool WearLoadout(Pawn pawn, Slot s)
         {
-            if (s.loadout.apparel.Count == 0) return false;
+            List<ThingStuffPair> set = s.loadout.ApparelFor(s.role);
+            if (set.Count == 0) return false;
             pawn.apparel.DestroyAll();
             int worn = 0;
-            foreach (ThingStuffPair p in s.loadout.apparel)
+            foreach (ThingStuffPair p in set)
             {
                 if (!p.thing.apparel.PawnCanWear(pawn) || !ApparelUtility.HasPartsToWear(pawn, p.thing)) continue;
                 if (!pawn.apparel.CanWearWithoutDroppingAnything(p.thing)) continue;
@@ -134,6 +135,27 @@ namespace HardenedRaids
             var ap = (Apparel)ThingMaker.MakeThing(warm.Value.thing, warm.Value.stuff);
             FinishGear(ap, pawn, s);
             pawn.apparel.Wear(ap, dropReplacedApparel: false);
+        }
+
+        /// <summary>Retire ce qui empêche le raider d'utiliser son arme (bouclier + arme à deux mains, ceinture bouclier + fusil...).
+        /// Utilise le test du jeu (Apparel.AllowVerbCast), donc couvre aussi les boucliers des mods.</summary>
+        public static void DropBlockingApparel(Pawn pawn)
+        {
+            ThingWithComps prim = pawn.equipment?.Primary;
+            if (prim == null || pawn.apparel == null) return;
+            Verb verb = prim.GetComp<CompEquippable>()?.PrimaryVerb;
+            foreach (Apparel ap in pawn.apparel.WornApparel.ToList())
+            {
+                bool blocks = Loadouts.BlocksWeapon(ap.def, prim.def);
+                if (!blocks && verb != null)
+                {
+                    try { blocks = !ap.AllowVerbCast(verb); } catch { }
+                }
+                if (!blocks) continue;
+                HRLog.Msg($"{pawn.LabelShort} : {ap.def.label} retiré (incompatible avec {prim.def.label}).");
+                pawn.apparel.Remove(ap);
+                ap.Destroy();
+            }
         }
 
         public static bool EquipWeapon(Pawn pawn, Slot s)
