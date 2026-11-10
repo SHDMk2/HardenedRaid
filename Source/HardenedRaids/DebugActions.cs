@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.Linq;
+using HarmonyLib;
 using System.Text;
 using LudeonTK;
 using RimWorld;
@@ -6,6 +8,26 @@ using Verse;
 
 namespace HardenedRaids
 {
+    /// <summary>Menus dev « Execute raid with points / faction / specifics » : ajoute des valeurs au-delà de 10 000
+    /// et les points actuels de la carte.</summary>
+    [HarmonyPatch(typeof(DebugActionsUtility), nameof(DebugActionsUtility.PointsOptions))]
+    public static class Patch_DebugPointsOptions
+    {
+        private static readonly float[] Extra = { 15000f, 20000f, 30000f, 50000f, 75000f, 100000f, 150000f, 200000f, 300000f };
+
+        public static void Postfix(bool extended, ref IEnumerable<float> __result)
+        {
+            if (!extended) return;
+            var list = __result.ToList();
+            list.AddRange(Extra);
+            if (Find.CurrentMap != null)
+            {
+                try { list.Add(UnityEngine.Mathf.Round(StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap))); } catch { }
+            }
+            __result = list.Distinct().OrderBy(x => x).ToList();
+        }
+    }
+
     public static class HRDebugActions
     {
         [DebugAction("Hardened Raids", "Aperçu des plans de raid (log)", allowedGameStates = AllowedGameStates.PlayingOnMap)]
