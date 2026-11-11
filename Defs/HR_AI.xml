@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Defs>
+  <!-- Retraite d'un convoi : monter dans un véhicule du raid -->
+  <JobDef>
+    <defName>HR_BoardVehicle</defName>
+    <driverClass>HardenedRaids.JobDriver_HRBoard</driverClass>
+    <reportString>embarque dans TargetA.</reportString>
+    <casualInterruptible>false</casualInterruptible>
+  </JobDef>
+
+  <DutyDef>
+    <defName>HR_BoardConvoy</defName>
+    <alwaysShowWeapon>true</alwaysShowWeapon>
+    <thinkNode Class="ThinkNode_Priority">
+      <subNodes>
+        <li Class="HardenedRaids.JobGiver_HRBoardConvoy" />
+        <li Class="JobGiver_AIDefendSelf">
+          <targetAcquireRadius>35</targetAcquireRadius>
+          <targetKeepRadius>40</targetKeepRadius>
+        </li>
+        <li Class="JobGiver_ExitMapBest">
+          <defaultLocomotion>Jog</defaultLocomotion>
+          <jobMaxDuration>200</jobMaxDuration>
+          <canFlyOutOfMap>false</canFlyOutOfMap>
+        </li>
+      </subNodes>
+    </thinkNode>
+  </DutyDef>
+</Defs>

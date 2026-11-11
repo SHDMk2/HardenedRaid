@@ -63,7 +63,45 @@ namespace HardenedRaids
         // ------------------------------------------------------------ catalogues
         public static bool IsArtillery(ThingDef d) => d?.building?.buildingTags != null && d.building.buildingTags.Contains("Artillery_BaseDestroyer");
 
-        private static bool TechOk(ThingDef d, Faction f) => d.techLevel == TechLevel.Undefined || d.techLevel <= f.def.techLevel;
+        /// <summary>Niveau réel d'une pièce : le sien, ou celui de ses recherches, ou celui de son arme.</summary>
+        public static TechLevel EffectiveTech(ThingDef d)
+        {
+            TechLevel t = d.techLevel;
+            if (d.researchPrerequisites != null)
+                foreach (ResearchProjectDef r in d.researchPrerequisites) if (r != null && r.techLevel > t) t = r.techLevel;
+            ThingDef gun = d.building?.turretGunDef;
+            if (gun != null && gun.techLevel > t) t = gun.techLevel;
+            return t;
+        }
+
+        /// <summary>
+        /// Pas au-dessus du niveau de la faction ; et une armée industrielle ou plus n'aligne pas de baliste ni de
+        /// pierrier : plancher industriel.
+        /// </summary>
+        private static bool TechOk(ThingDef d, Faction f)
+        {
+            TechLevel t = EffectiveTech(d);
+            if (t == TechLevel.Undefined) return true;
+            if (t > f.def.techLevel) return false;
+            return f.def.techLevel < TechLevel.Industrial || t >= TechLevel.Industrial;
+        }
+
+        /// <summary>
+        /// Règle d'uniformité : un raid aligne au plus deux modèles, une pièce légère (moitié la moins chère du
+        /// catalogue) et une lourde (l'autre moitié). Index 0 = légère, 1 = lourde.
+        /// </summary>
+        public static List<ThingDef> ChooseKit(List<ThingDef> defs, float x)
+        {
+            var kit = new List<ThingDef>();
+            if (defs == null || defs.Count == 0) return kit;
+            List<ThingDef> sorted = defs.OrderBy(d => d.BaseMarketValue).ToList();
+            int half = sorted.Count / 2;
+            ThingDef light = PickWeighted(sorted.Take(Mathf.Max(1, half)).ToList(), x);
+            ThingDef heavy = PickWeighted(sorted.Skip(half).ToList(), x);
+            if (light != null) kit.Add(light);
+            if (heavy != null && heavy != light) kit.Add(heavy);
+            return kit;
+        }
 
         private static bool NeedsPower(ThingDef d) =>
             d.comps != null && d.comps.Any(c => c is CompProperties_Power p && p.PowerConsumption > 0f);
@@ -103,7 +141,7 @@ namespace HardenedRaids
         private static ThingDef StuffFor(ThingDef d) => d.MadeFromStuff ? (GenStuff.AllowedStuffsFor(d).Contains(ThingDefOf.Steel) ? ThingDefOf.Steel : GenStuff.DefaultStuffFor(d)) : null;
 
         /// <summary>Plus le palier est haut, plus on favorise le matériel cher (gros calibres).</summary>
-        private static ThingDef PickWeighted(List<ThingDef> defs, float x)
+        public static ThingDef PickWeighted(List<ThingDef> defs, float x)
         {
             float exp = Mathf.Lerp(0f, 1.5f, Mathf.InverseLerp(2f, 6f, x));
             return defs.TryRandomElementByWeight(d => Mathf.Pow(Mathf.Max(50f, d.BaseMarketValue), exp), out ThingDef r) ? r : null;
@@ -150,12 +188,13 @@ namespace HardenedRaids
         private static void PlaceTurrets(List<Blueprint_Build> output, Map map, Faction faction, float x, Rot4 facing)
         {
             EnsureCatalog();
-            List<ThingDef> defs = turretDefs.Where(d => TechOk(d, faction)).ToList();
-            if (defs.Count == 0) return;
+            List<ThingDef> kit = ChooseKit(turretDefs.Where(d => TechOk(d, faction)).ToList(), x);
+            if (kit.Count == 0) return;
+            HRLog.Msg($"siège : dotation {string.Join(" + ", kit.Select(d => d.label))}.");
             int n = Mathf.Clamp(Mathf.RoundToInt((x - 1.5f) * 1.5f), 1, HRSettings.MaxSiegeTurrets);
             for (int i = 0; i < n; i++)
             {
-                ThingDef def = PickWeighted(defs, x);
+                ThingDef def = kit[i % kit.Count];
                 if (def == null || !TryPlace(output, def, map, faction, facing)) break;
             }
         }

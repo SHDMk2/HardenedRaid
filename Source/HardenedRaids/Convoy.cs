@@ -29,8 +29,15 @@ namespace HardenedRaids
         public IntVec3 stagingCenter = IntVec3.Invalid;
         public float tierX;
         public int turretsPlaced;
+        public List<ThingDef> kit = new List<ThingDef>();
+        // retraite
+        public bool retreating;
+        public int retreatStart;
+        public Lord retreatLord;
+        public List<Pawn> leaving = new List<Pawn>();
 
         public const string MemoAllUnloaded = "HRConvoyArrived";
+        public const string MemoRetreat = "HRConvoyRetreat";
 
         public LordJob_HRConvoy() { }
 
@@ -50,8 +57,16 @@ namespace HardenedRaids
             var g = new StateGraph();
             var approach = new LordToil_HRConvoyApproach();
             var assault = new LordToil_HRConvoyAssault();
+            var retreat = new LordToil_HRConvoyRetreat();
             g.AddToil(approach);
             g.AddToil(assault);
+            g.AddToil(retreat);
+            var r1 = new Transition(approach, retreat);
+            r1.AddTrigger(new Trigger_Memo(MemoRetreat));
+            g.AddTransition(r1);
+            var r2 = new Transition(assault, retreat);
+            r2.AddTrigger(new Trigger_Memo(MemoRetreat));
+            g.AddTransition(r2);
             var t = new Transition(approach, assault);
             t.AddTrigger(new Trigger_Memo(MemoAllUnloaded));
             t.AddTrigger(new Trigger_TicksPassed(6000));   // filet : 2,4 h de jeu au plus avant de tout débarquer
@@ -59,12 +74,134 @@ namespace HardenedRaids
             return g;
         }
 
-        /// <summary>Lord qui reçoit les fantassins débarqués (celui du raid, ou un assaut neuf s'il a disparu).</summary>
+        /// <summary>Lord qui reçoit les fantassins débarqués (celui du raid, ou un assaut neuf s'il a disparu ; en retraite : le rembarquement).</summary>
         public Lord InfantryLord(Map map)
         {
+            if (retreating) return RetreatLord(map);
             if (infantryLord != null && map.lordManager.lords.Contains(infantryLord)) return infantryLord;
             infantryLord = LordMaker.MakeNewLord(faction, new LordJob_AssaultColony(faction, canKidnap: true, canTimeoutOrFlee: true), map);
             return infantryLord;
+        }
+
+        public Lord RetreatLord(Map map, List<Pawn> starting = null)
+        {
+            if (retreatLord == null || !map.lordManager.lords.Contains(retreatLord))
+                retreatLord = LordMaker.MakeNewLord(faction, new LordJob_HRBoard(faction, lord), map, starting);
+            else if (starting != null)
+                foreach (Pawn p in starting) retreatLord.AddPawn(p);
+            return retreatLord;
+        }
+
+        // ------------------------------------------------------------ fin du raid
+        public static bool ExitLike(Lord l)
+        {
+            string n = l?.CurLordToil?.GetType().Name ?? "";
+            return n.Contains("Exit") || n.Contains("Flee") || n.Contains("Kidnap") || n.Contains("Steal");
+        }
+
+        /// <summary>Victoire ou défaite : le lord d'infanterie du raid fuit / quitte la carte, ou n'existe plus.</summary>
+        public bool RaidOver(Map map)
+        {
+            if (infantryLord == null) return false;
+            if (!map.lordManager.lords.Contains(infantryLord) || infantryLord.ownedPawns.Count == 0) return true;
+            return ExitLike(infantryLord);
+        }
+
+        public void StartRetreat(Map map)
+        {
+            retreating = true;
+            retreatStart = Find.TickManager.TicksGame;
+            foreach (Pawn v in lord.ownedPawns)
+            {
+                holding.Remove(v);
+                VehicleCompat.Undeploy(v);
+            }
+            int n = Collect(map);
+            HRLog.Msg($"convoi {faction.Name} : retraite, {n} fantassin(s) rappelé(s) vers les véhicules.");
+        }
+
+        /// <summary>Les fantassins du raid qui partent (et les servants des tourelles) sont rappelés vers les véhicules.</summary>
+        private int Collect(Map map)
+        {
+            List<Pawn> vehicles = lord.ownedPawns.Where(v => v.Spawned && !leaving.Contains(v) && VehicleCompat.CanMove(v)).ToList();
+            if (vehicles.Count == 0) return 0;
+            var take = new List<Pawn>();
+            var packs = new Dictionary<Pawn, Building>();
+            foreach (Pawn p in map.mapPawns.SpawnedPawnsInFaction(faction).ToList())
+            {
+                if (VehicleGate.IsVehicle(p) || !p.RaceProps.Humanlike || p.Downed || p.InMentalState || p.IsPrisoner) continue;
+                if (p.carryTracker?.CarriedThing is Pawn) continue;   // les ravisseurs partent à pied avec leur prise
+                Lord l = p.GetLord();
+                if (l != null && (l == retreatLord || l.LordJob is LordJob_HRConvoy || l.LordJob is LordJob_HRBoard)) continue;
+                bool crew = l?.LordJob is LordJob_HRTurretCrew;
+                if (!(l == null || l == infantryLord || crew || ExitLike(l))) continue;
+                if (!vehicles.Any(v => v.Position.InHorDistOf(p.Position, 100f))) continue;
+                if (crew)
+                {
+                    Building b = l.ownedBuildings.Where(x => x.Spawned).OrderBy(x => x.Position.DistanceToSquared(p.Position)).FirstOrDefault();
+                    if (b != null) packs[p] = b;
+                }
+                take.Add(p);
+            }
+            if (take.Count == 0) return 0;
+            foreach (Pawn p in take) p.GetLord()?.Notify_PawnLost(p, PawnLostCondition.ForcedToJoinOtherLord);
+            Lord rl = RetreatLord(map, take);
+            if (rl.LordJob is LordJob_HRBoard bj)
+            {
+                foreach (var kv in packs) bj.pack[kv.Key] = kv.Value;
+                foreach (Pawn p in take) { bj.Assign(p); p.jobs?.EndCurrentJob(JobCondition.InterruptForced); }
+            }
+            return take.Count;
+        }
+
+        /// <summary>
+        /// Retraite : les camions attendent leurs passagers puis partent ; les blindés tiennent la position (tir auto)
+        /// jusqu'au départ du dernier camion, puis partent à leur tour. Un véhicule immobilisé est abandonné.
+        /// </summary>
+        public void TickRetreat(Map map, int now)
+        {
+            int el = now - retreatStart;
+            if (el % 300 < 60 && el < 4800) Collect(map);
+            var bj = retreatLord?.LordJob as LordJob_HRBoard;
+            bool trucksGone = lord.ownedPawns.All(v => !v.Spawned || leaving.Contains(v) || VehicleCompat.HasTurrets(v) || !VehicleCompat.CanMove(v));
+            foreach (Pawn v in lord.ownedPawns.ToList())
+            {
+                if (!v.Spawned) continue;
+                VehicleCompat.Ready(v);
+                if (leaving.Contains(v)) { VehicleCompat.ExitMap(v); continue; }
+                if (!VehicleCompat.CanMove(v) && !VehicleCompat.IsDeployed(v) && !VehicleCompat.IsDeploying(v)) { Abandon(v, map); continue; }
+                int pending = bj?.Pending(v) ?? 0;
+                bool full = VehicleCompat.FreeSeats(v) == 0;
+                bool truck = !VehicleCompat.HasTurrets(v);
+                bool go = truck ? (el >= 600 && (pending == 0 || full)) || el > 6000
+                                : (el >= 900 && trucksGone && pending == 0) || el > 7500;
+                if (go)
+                {
+                    if (VehicleCompat.ExitMap(v))
+                    {
+                        leaving.Add(v);
+                        HRLog.Msg($"convoi : {v.LabelShort} quitte la carte avec {VehicleCompat.PawnsAboard(v).Count()} homme(s) à bord.");
+                    }
+                }
+                else TickFireSupport(v, now);
+            }
+        }
+
+        private readonly HashSet<Pawn> abandoned = new HashSet<Pawn>();
+
+        private void Abandon(Pawn v, Map map)
+        {
+            if (!abandoned.Add(v)) return;
+            foreach (Pawn p in VehicleCompat.PawnsAboard(v).ToList())
+            {
+                VehicleCompat.Disembark(v, p);
+                if (p.Spawned && p.GetLord() != retreatLord)
+                {
+                    p.GetLord()?.Notify_PawnLost(p, PawnLostCondition.ForcedToJoinOtherLord);
+                    RetreatLord(map, new List<Pawn> { p });
+                }
+            }
+            HRLog.Msg($"convoi : {v.LabelShort} immobilisé, abandonné.");
         }
 
         // ------------------------------------------------------------ débarquement d'un véhicule
@@ -85,45 +222,74 @@ namespace HardenedRaids
                 down.Add(p);
             }
             if (truck && deployTurrets && down.Count > 0 && turretsPlaced < TruckTurrets.MaxFor(tierX))
-                turretsPlaced += TruckTurrets.Deploy(map, faction, v, down, target, stagingCenter);
+            {
+                ThingDef def = NextTurretDef();
+                if (def != null) turretsPlaced += TruckTurrets.Deploy(map, faction, v, down, target, stagingCenter, def);
+            }
             // le blindé repart tout de suite (ou le camion se gare) : on force une nouvelle décision
             v.mindState.duty = DutyFor(v);
             v.jobs?.EndCurrentJob(JobCondition.InterruptForced);
             HRLog.Msg($"convoi : {v.LabelShort} a débarqué {down.Count} fantassin(s){(truck ? "" : ", part à l'assaut")}.");
         }
 
-        // ------------------------------------------------------------ appui-feu : s'arrêter, se déployer, tirer
+        /// <summary>Dotation uniforme du raid : une pièce légère et une lourde, en alternance (la lourde d'abord à haut palier).</summary>
+        private ThingDef NextTurretDef()
+        {
+            kit ??= new List<ThingDef>();
+            kit.RemoveAll(d => d == null);
+            if (kit.Count == 0) kit = TruckTurrets.ChooseKit(faction, tierX);
+            if (kit.Count == 0) return null;
+            bool heavy = kit.Count > 1 && turretsPlaced % 2 == (tierX >= 4f ? 0 : 1);
+            return heavy ? kit[1] : kit[0];
+        }
+
+        // ------------------------------------------------------------ appui-feu : s'arrêter (se déployer), pivoter, tirer
         private readonly Dictionary<Pawn, int> lastFire = new Dictionary<Pawn, int>();
+        private readonly HashSet<Pawn> holding = new HashSet<Pawn>();
 
         public void TickFireSupport(Pawn v, int now)
         {
-            if (!v.Spawned || !unloaded.Contains(v) || !VehicleCompat.IsFireSupport(v)) return;
+            if (!v.Spawned || (!unloaded.Contains(v) && !retreating) || !VehicleCompat.IsFireSupport(v)) return;
             if (VehicleCompat.IsDeploying(v)) return;
-            if (VehicleCompat.IsDeployed(v))
+            bool deploy = VehicleCompat.NeedsDeploy(v);
+            bool inPosition = deploy ? VehicleCompat.IsDeployed(v) : holding.Contains(v);
+            if (inPosition)
             {
                 if (VehicleCompat.ManualFire(v)) { lastFire[v] = now; return; }
+                if (VehicleCompat.TargetInRange(v, out IntVec3 c) && VehicleCompat.FaceTarget(v, c) && VehicleCompat.ManualFire(v)) { lastFire[v] = now; return; }
                 if (!lastFire.TryGetValue(v, out int t)) lastFire[v] = t = now;
                 if (now - t > 1800)  // 30 s sans cible : on replie et on avance
                 {
-                    VehicleCompat.Undeploy(v);
+                    if (deploy) VehicleCompat.Undeploy(v);
+                    holding.Remove(v);
                     v.mindState.duty = DutyFor(v);
                     v.jobs?.EndCurrentJob(JobCondition.InterruptForced);
                 }
                 return;
             }
-            if (VehicleCompat.TargetInRange(v))
+            if (VehicleCompat.TargetInRange(v, out IntVec3 cell))
             {
                 v.mindState.duty = VehicleCompat.TravelDuty(v.Position);
-                VehicleCompat.StartDeploy(v);
+                if (deploy) VehicleCompat.StartDeploy(v);
+                else
+                {
+                    holding.Add(v);
+                    VehicleCompat.Stop(v);
+                    VehicleCompat.FaceTarget(v, cell);
+                }
                 lastFire[v] = now;
-                HRLog.Msg($"convoi : {v.LabelShort} se déploie pour tirer.");
+                HRLog.Msg($"convoi : {v.LabelShort} {(deploy ? "se déploie" : "s'arrête")} pour tirer sur {cell}.");
             }
         }
 
-        public PawnDuty DutyFor(Pawn v) =>
-            VehicleCompat.HasTurrets(v) && VehicleCompat.CanMove(v) && !VehicleCompat.IsDeployed(v) && !VehicleCompat.IsDeploying(v)
+        public PawnDuty DutyFor(Pawn v)
+        {
+            if (retreating || holding.Contains(v) || VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v))
+                return VehicleCompat.TravelDuty(v.Position);   // retraite : on tient la position / pièce en batterie
+            return VehicleCompat.HasTurrets(v) && VehicleCompat.CanMove(v)
                 ? VehicleCompat.AssaultDuty()
-                : VehicleCompat.TravelDuty(v.Position);   // camion garé / pièce déployée
+                : VehicleCompat.TravelDuty(v.Position);   // camion garé
+        }
 
         public override void ExposeData()
         {
@@ -136,9 +302,22 @@ namespace HardenedRaids
             Scribe_Values.Look(ref stagingCenter, "stagingCenter", IntVec3.Invalid);
             Scribe_Values.Look(ref tierX, "tierX");
             Scribe_Values.Look(ref turretsPlaced, "turretsPlaced");
+            Scribe_Collections.Look(ref kit, "kit", LookMode.Def);
+            Scribe_Values.Look(ref retreating, "retreating");
+            Scribe_Values.Look(ref retreatStart, "retreatStart");
+            Scribe_References.Look(ref retreatLord, "retreatLord");
+            Scribe_Collections.Look(ref leaving, "leaving", LookMode.Reference);
             dismount ??= new List<Pawn>();
             unloaded ??= new List<Pawn>();
-            if (Scribe.mode == LoadSaveMode.PostLoadInit) { dismount.RemoveAll(p => p == null); unloaded.RemoveAll(p => p == null); }
+            kit ??= new List<ThingDef>();
+            leaving ??= new List<Pawn>();
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                dismount.RemoveAll(p => p == null);
+                unloaded.RemoveAll(p => p == null);
+                leaving.RemoveAll(p => p == null);
+                kit.RemoveAll(d => d == null);
+            }
         }
     }
 
@@ -237,6 +416,7 @@ namespace HardenedRaids
                 if (arrived || hit || stuck || !VehicleCompat.CanMove(v)) Job.Unload(v, map);
             }
             foreach (Pawn v in lord.ownedPawns.ToList()) Job.TickFireSupport(v, now);
+            if (Job.RaidOver(map)) { lord.ReceiveMemo(LordJob_HRConvoy.MemoRetreat); return; }
             if (lord.ownedPawns.All(v => Job.unloaded.Contains(v) || !v.Spawned)) lord.ReceiveMemo(LordJob_HRConvoy.MemoAllUnloaded);
         }
     }
@@ -275,6 +455,37 @@ namespace HardenedRaids
                 if (now % 240 == 0) VehicleCompat.Ready(v);
                 Job.TickFireSupport(v, now);
             }
+            if (Job.RaidOver(Map)) lord.ReceiveMemo(LordJob_HRConvoy.MemoRetreat);
+        }
+    }
+
+    /// <summary>Fin du raid : rembarquement, départ des camions, puis des blindés qui couvraient.</summary>
+    public class LordToil_HRConvoyRetreat : LordToil
+    {
+        private LordJob_HRConvoy Job => (LordJob_HRConvoy)lord.LordJob;
+
+        public override void Init()
+        {
+            base.Init();
+            try { Job.StartRetreat(Map); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] retraite du convoi : " + e); }
+        }
+
+        public override void UpdateAllDuties()
+        {
+            foreach (Pawn v in lord.ownedPawns)
+            {
+                VehicleCompat.Ready(v);
+                v.mindState.duty = Job.DutyFor(v);
+            }
+        }
+
+        public override void LordToilTick()
+        {
+            int now = Find.TickManager.TicksGame;
+            if (now % 60 != 0) return;
+            try { Job.TickRetreat(Map, now); }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] retraite du convoi : " + e, 0x48525254); }
         }
     }
 
@@ -283,24 +494,38 @@ namespace HardenedRaids
     {
         public static int MaxFor(float x) => Mathf.Min(HRSettings.MaxTruckTurrets, Mathf.Max(1, Mathf.RoundToInt(x - 1f)));
 
-        /// <summary>Tir direct seulement (pas d'obusier / mortier) : on veut des pièces qui couvrent les camions.</summary>
-        private static bool DirectFire(ThingDef turret)
+        /// <summary>
+        /// Tir direct seulement (pas d'obusier / mortier / lance-roquettes multiple) : des pièces qui couvrent les
+        /// camions. Flak et autocanons inclus (portée longue sous CE).
+        /// </summary>
+        public static bool DirectFire(ThingDef turret)
         {
             ThingDef gun = turret.building?.turretGunDef;
             VerbProperties v = gun?.Verbs?.FirstOrDefault();
-            if (v == null || !v.requireLineOfSight || v.range > 75f || v.minRange > 6f) return false;
-            return !(v.verbClass?.Name.Contains("Mortar") ?? false) && !(v.verbClass?.Name.Contains("Artillery") ?? false);
+            if (v == null || !v.requireLineOfSight || v.range > 140f || v.minRange > 10f) return false;
+            if (v.defaultProjectile?.projectile?.flyOverhead ?? false) return false;
+            string vc = v.verbClass?.Name ?? "";
+            if (vc.Contains("Mortar") || vc.Contains("Artillery")) return false;
+            string n = turret.defName;
+            return !(n.Contains("Mortar") || n.Contains("Artillery") || n.Contains("Katyusha") || n.Contains("Spotter") || n.Contains("Howitzer"));
+        }
+
+        /// <summary>Dotation du raid : une pièce légère (mitrailleuse) + une lourde (flak, autocanon, antichar).</summary>
+        public static List<ThingDef> ChooseKit(Faction faction, float x)
+        {
+            List<ThingDef> defs = Patch_SiegeBlueprints.TurretDefsFor(faction, 4).Where(DirectFire).ToList();
+            List<ThingDef> manned = defs.Where(d => d.HasComp(typeof(CompMannable))).ToList();
+            if (manned.Count > 0) defs = manned;
+            List<ThingDef> kit = Patch_SiegeBlueprints.ChooseKit(defs, x);
+            HRLog.Msg(kit.Count == 0
+                ? "tourelles de camion : aucune tourelle à tir direct disponible pour cette faction."
+                : $"tourelles de camion : dotation {string.Join(" + ", kit.Select(d => d.label))} (parmi {defs.Count}).");
+            return kit;
         }
 
         /// <summary>Décharge une tourelle pour ce camion, sur la ligne de tir devant le convoi. Retourne 1 si posée.</summary>
-        public static int Deploy(Map map, Faction faction, Pawn truck, List<Pawn> infantry, IntVec3 target, IntVec3 stagingCenter)
+        public static int Deploy(Map map, Faction faction, Pawn truck, List<Pawn> infantry, IntVec3 target, IntVec3 stagingCenter, ThingDef def)
         {
-            List<ThingDef> defs = Patch_SiegeBlueprints.TurretDefsFor(faction, 3).Where(DirectFire).ToList();
-            List<ThingDef> manned = defs.Where(d => d.HasComp(typeof(CompMannable))).ToList();
-            if (manned.Count > 0) defs = manned;
-            if (defs.Count == 0) { HRLog.Msg("tourelles de camion : aucune tourelle à tir direct disponible pour cette faction."); return 0; }
-            ThingDef def = defs.RandomElementByWeight(d => Mathf.Pow(Mathf.Max(50f, d.BaseMarketValue), 0.7f));
-
             Vector2 axis = new Vector2(target.x - truck.Position.x, target.z - truck.Position.z);
             axis = axis.sqrMagnitude < 1f ? Vector2.up : axis.normalized;
             // devant le camion ET devant la ligne d'arrêt : rien entre la tourelle et la base
@@ -395,11 +620,27 @@ namespace HardenedRaids
             g.AddToil(man);
             LordToil assault = new LordToil_AssaultColony();
             g.AddToil(assault);
+            LordToil exit = new LordToil_ExitMap(LocomotionUrgency.Jog, canDig: false, interruptCurrentJob: true);
+            g.AddToil(exit);
+            // fin du raid sans convoi pour les rembarquer (sinon c'est la retraite du convoi qui les récupère)
+            var e = new Transition(man, exit);
+            e.AddSource(assault);
+            e.AddTrigger(new Trigger_TickCondition(RaidEnded, 250));
+            g.AddTransition(e);
             var t = new Transition(man, assault);
             t.AddTrigger(new Trigger_Memo(MemoLost));
             t.AddTrigger(new Trigger_TicksPassed(40000));
             g.AddTransition(t);
             return g;
+        }
+
+        /// <summary>Plus aucun autre groupe de la faction n'attaque sur la carte.</summary>
+        private bool RaidEnded()
+        {
+            Map map = lord?.Map;
+            if (map == null) return false;
+            return !map.lordManager.lords.Any(l => l != lord && l.faction == lord.faction && l.LordJob is not LordJob_HRTurretCrew
+                                                   && l.ownedPawns.Count > 0 && !LordJob_HRConvoy.ExitLike(l));
         }
 
         public override void ExposeData() => Scribe_References.Look(ref faction, "faction");
@@ -421,6 +662,165 @@ namespace HardenedRaids
         {
             if (Find.TickManager.TicksGame % 250 != 0) return;
             if (!lord.ownedBuildings.Any(b => b.Spawned && !b.Destroyed)) lord.ReceiveMemo(LordJob_HRTurretCrew.MemoLost);
+        }
+    }
+
+    // ---------------------------------------------------------------- retraite : rembarquement
+    /// <summary>
+    /// Fantassins en retraite : chacun reçoit une place dans un véhicule du convoi (camions d'abord), y court et
+    /// embarque. Un servant remballe d'abord sa tourelle. Sans place : sortie à pied (duty HR_BoardConvoy).
+    /// </summary>
+    public class LordJob_HRBoard : LordJob
+    {
+        public Faction faction;
+        public Lord convoy;
+        public Dictionary<Pawn, Pawn> assigned = new Dictionary<Pawn, Pawn>();
+        public Dictionary<Pawn, Building> pack = new Dictionary<Pawn, Building>();
+        public Dictionary<Pawn, int> packStart = new Dictionary<Pawn, int>();
+        private List<Pawn> k1, v1, k2;
+        private List<Building> v2;
+
+        public LordJob_HRBoard() { }
+        public LordJob_HRBoard(Faction f, Lord convoy) { faction = f; this.convoy = convoy; }
+
+        public override bool AddFleeToil => false;
+
+        public override StateGraph CreateGraph()
+        {
+            var g = new StateGraph();
+            g.AddToil(new LordToil_HRBoard());
+            return g;
+        }
+
+        private LordJob_HRConvoy Convoy => convoy?.LordJob as LordJob_HRConvoy;
+
+        private bool Usable(Pawn v, LordJob_HRConvoy c) =>
+            v != null && v.Spawned && !v.Destroyed && convoy.ownedPawns.Contains(v) && !c.leaving.Contains(v) && VehicleCompat.CanMove(v);
+
+        /// <summary>Passagers attendus par ce véhicule (en route, pas encore à bord).</summary>
+        public int Pending(Pawn v, Pawn except = null) =>
+            assigned.Count(kv => kv.Value == v && kv.Key != except && kv.Key.Spawned && !kv.Key.Dead && !kv.Key.Downed && kv.Key.GetLord() == lord);
+
+        public Pawn Assign(Pawn p)
+        {
+            LordJob_HRConvoy c = Convoy;
+            if (c == null || !p.Spawned || !VehicleGate.Active) return null;
+            if (assigned.TryGetValue(p, out Pawn cur) && Usable(cur, c) && VehicleCompat.FreeSeats(cur) - Pending(cur, p) > 0) return cur;
+            assigned.Remove(p);
+            Pawn best = null;
+            float bestScore = float.MaxValue;
+            foreach (Pawn v in convoy.ownedPawns)
+            {
+                if (!Usable(v, c) || VehicleCompat.FreeSeats(v) - Pending(v) <= 0) continue;
+                float d = v.Position.DistanceTo(p.Position);
+                if (d > 100f) continue;
+                if (VehicleCompat.HasTurrets(v)) d += 25f;   // camions d'abord
+                if (d < bestScore && p.CanReach(v, PathEndMode.Touch, Danger.Deadly)) { best = v; bestScore = d; }
+            }
+            if (best != null) assigned[p] = best;
+            return best;
+        }
+
+        /// <summary>Servant : aller à sa tourelle, la remballer (4 s), puis embarquer.</summary>
+        public Job PackJob(Pawn pawn)
+        {
+            if (!pack.TryGetValue(pawn, out Building b)) return null;
+            if (b == null || !b.Spawned) { pack.Remove(pawn); packStart.Remove(pawn); return null; }
+            Map map = pawn.Map;
+            int now = Find.TickManager.TicksGame;
+            if (b.OccupiedRect().ExpandedBy(1).Contains(pawn.Position))
+            {
+                if (!packStart.TryGetValue(pawn, out int s)) packStart[pawn] = s = now;
+                if (now - s < 240)
+                {
+                    Job w = JobMaker.MakeJob(JobDefOf.Wait);
+                    w.expiryInterval = 240 - (now - s) + 1;
+                    return w;
+                }
+                HRLog.Msg($"retraite : {pawn.LabelShort} remballe {b.LabelShort}.");
+                b.Destroy(DestroyMode.Vanish);
+                pack.Remove(pawn);
+                packStart.Remove(pawn);
+                return null;
+            }
+            IntVec3 cell = GenAdj.CellsAdjacent8Way(b).Where(c => c.InBounds(map) && c.Standable(map) && pawn.CanReach(c, PathEndMode.OnCell, Danger.Deadly))
+                .OrderBy(c => c.DistanceToSquared(pawn.Position)).FirstOrFallback(IntVec3.Invalid);
+            if (!cell.IsValid) { pack.Remove(pawn); return null; }
+            Job g = JobMaker.MakeJob(JobDefOf.Goto, cell);
+            g.locomotionUrgency = LocomotionUrgency.Jog;
+            g.expiryInterval = 400;
+            return g;
+        }
+
+        public override void ExposeData()
+        {
+            Scribe_References.Look(ref faction, "faction");
+            Scribe_References.Look(ref convoy, "convoy");
+            Scribe_Collections.Look(ref assigned, "assigned", LookMode.Reference, LookMode.Reference, ref k1, ref v1);
+            Scribe_Collections.Look(ref pack, "pack", LookMode.Reference, LookMode.Reference, ref k2, ref v2);
+            assigned ??= new Dictionary<Pawn, Pawn>();
+            pack ??= new Dictionary<Pawn, Building>();
+            packStart ??= new Dictionary<Pawn, int>();
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                foreach (Pawn k in assigned.Keys.Where(k => k == null || assigned[k] == null).ToList()) assigned.Remove(k);
+                foreach (Pawn k in pack.Keys.Where(k => k == null || pack[k] == null).ToList()) pack.Remove(k);
+            }
+        }
+    }
+
+    public class LordToil_HRBoard : LordToil
+    {
+        public override bool AllowSatisfyLongNeeds => false;
+
+        public override void UpdateAllDuties()
+        {
+            foreach (Pawn p in lord.ownedPawns) p.mindState.duty = new PawnDuty(HRDefOf.HR_BoardConvoy);
+        }
+
+        public override void LordToilTick()
+        {
+            if (Find.TickManager.TicksGame % 250 != 0) return;
+            // à bord d'un véhicule sorti de la carte : plus rien à faire ici
+            foreach (Pawn p in lord.ownedPawns.ToList())
+                if (!p.Dead && p.MapHeld != lord.Map) lord.Notify_PawnLost(p, PawnLostCondition.ExitedMap);
+        }
+    }
+
+    public class JobGiver_HRBoardConvoy : ThinkNode_JobGiver
+    {
+        protected override Job TryGiveJob(Pawn pawn)
+        {
+            if (!VehicleGate.Active || pawn.GetLord()?.LordJob is not LordJob_HRBoard job) return null;
+            if (!pawn.health.capacities.CapableOf(PawnCapacityDefOf.Moving)) return null;
+            Job packJob = job.PackJob(pawn);
+            if (packJob != null) return packJob;
+            Pawn v = job.Assign(pawn);
+            if (v == null) return null;
+            Job j = JobMaker.MakeJob(HRDefOf.HR_BoardVehicle, v);
+            j.locomotionUrgency = LocomotionUrgency.Sprint;
+            j.expiryInterval = 600;
+            j.checkOverrideOnExpire = true;
+            return j;
+        }
+    }
+
+    /// <summary>Aller au véhicule et monter à bord (n'importe quelle place libre).</summary>
+    public class JobDriver_HRBoard : JobDriver
+    {
+        public override bool TryMakePreToilReservations(bool errorOnFailed) => true;
+
+        protected override IEnumerable<Toil> MakeNewToils()
+        {
+            this.FailOnDespawnedOrNull(TargetIndex.A);
+            yield return Toils_Goto.GotoThing(TargetIndex.A, PathEndMode.Touch);
+            Toil board = ToilMaker.MakeToil("HRBoard");
+            board.initAction = () =>
+            {
+                if (job.targetA.Thing is not Pawn v || !VehicleCompat.TryBoard(v, pawn)) EndJobWith(JobCondition.Incompletable);
+            };
+            board.defaultCompleteMode = ToilCompleteMode.Instant;
+            yield return board;
         }
     }
 }

@@ -13,6 +13,8 @@ namespace HardenedRaids
     public static class HRDefOf
     {
         public static HediffDef HR_RaiderTier;
+        public static Verse.AI.DutyDef HR_BoardConvoy;
+        public static JobDef HR_BoardVehicle;
         static HRDefOf() => DefOfHelper.EnsureInitializedInCtor(typeof(HRDefOf));
     }
 

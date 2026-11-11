@@ -92,13 +92,100 @@ namespace HardenedRaids
         public static bool IsDeployed(Pawn v) => v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Deployed;
         public static bool IsDeploying(Pawn v) => v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Deploying;
 
-        /// <summary>Une cible à portée d'une tourelle manuelle (qu'on soit déployé ou non).</summary>
-        public static bool TargetInRange(Pawn v)
+        /// <summary>Burya : la pièce ne tire que véhicule déployé. Scytheman : pas de déploiement, juste à l'arrêt.</summary>
+        public static bool NeedsDeploy(Pawn v) =>
+            v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Turrets.Any(t => Manual(t) && t.deployment == DeploymentType.Deployed);
+
+        /// <summary>
+        /// La cible la plus proche à portée d'une tourelle manuelle, sans tenir compte de l'angle de tir (le
+        /// Scytheman ne tire que vers l'arrière : on le fera pivoter).
+        /// </summary>
+        public static bool TargetInRange(Pawn v, out IntVec3 cell)
         {
-            if (v is not VehiclePawn vp || vp.CompVehicleTurrets == null) return false;
-            foreach (VehicleTurret t in vp.CompVehicleTurrets.Turrets)
-                if (Manual(t) && t.HasAmmo && t.TryGetTarget(out _)) return true;
+            cell = IntVec3.Invalid;
+            if (v is not VehiclePawn vp || !vp.Spawned || vp.CompVehicleTurrets == null) return false;
+            List<VehicleTurret> manual = vp.CompVehicleTurrets.Turrets.Where(t => Manual(t) && t.HasAmmo).ToList();
+            if (manual.Count == 0) return false;
+            float best = float.MaxValue;
+            foreach (Verse.AI.IAttackTarget a in vp.Map.attackTargetsCache.GetPotentialTargetsFor(vp))
+            {
+                Thing th = a.Thing;
+                if (th == null || !th.Spawned || a.ThreatDisabled(vp)) continue;
+                var lt = new LocalTargetInfo(th);
+                foreach (VehicleTurret t in manual)
+                {
+                    if (!t.InRange(lt)) continue;
+                    bool overhead = t.ProjectileDef?.projectile?.flyOverhead ?? false;
+                    if (!overhead && !GenSight.LineOfSight(vp.Position, th.Position, vp.Map, true)) continue;
+                    float d = (th.Position - vp.Position).LengthHorizontalSquared;
+                    if (d < best) { best = d; cell = th.Position; }
+                    break;
+                }
+            }
+            return cell.IsValid;
+        }
+
+        private static readonly System.Reflection.MethodInfo angleBetween = HarmonyLib.AccessTools.Method(typeof(VehicleTurret), "AngleBetween");
+
+        /// <summary>Fait pivoter le véhicule sur place pour que la cible entre dans l'arc de tir d'une tourelle manuelle.</summary>
+        public static bool FaceTarget(Pawn v, IntVec3 cell)
+        {
+            if (v is not VehiclePawn vp || !vp.Spawned || vp.CompVehicleTurrets == null) return false;
+            Map map = vp.Map;
+            object[] at = { cell.ToVector3Shifted() };
+            // AngleBetween(Vector3) : appel par réflexion (le Vector3 de Vehicles.dll n'est pas celui des références de compilation)
+            bool Aligned() => angleBetween != null && vp.CompVehicleTurrets.Turrets.Any(t => Manual(t) && (bool)angleBetween.Invoke(t, at));
+            if (Aligned()) return true;
+            Rot4 old = vp.Rotation;
+            float oldAngle = vp.Angle;
+            foreach (Rot4 r in new[] { Rot4.North, Rot4.East, Rot4.South, Rot4.West })
+            {
+                if (r == old) continue;
+                CellRect rect = vp.VehicleDef.VehicleRect(vp.Position, r);
+                if (!rect.InBounds(map)) continue;
+                bool free = true;
+                foreach (IntVec3 c in rect)
+                    if (!c.Standable(vp.VehicleDef, map) || c.GetThingList(map).Any(t => t is VehiclePawn o && o != vp)) { free = false; break; }
+                if (!free) continue;
+                vp.Rotation = r;
+                vp.Angle = 0f;
+                if (Aligned()) { vp.ReclaimPosition(); return true; }
+            }
+            vp.Rotation = old;
+            vp.Angle = oldAngle;
             return false;
+        }
+
+        public static void Stop(Pawn v)
+        {
+            if (v is not VehiclePawn vp || !vp.Spawned) return;
+            if (vp.vehiclePather.Moving) vp.vehiclePather.StopDead();
+            vp.jobs?.EndCurrentJob(Verse.AI.JobCondition.InterruptForced);
+        }
+
+        // ------------------------------------------------------------ retraite
+        private static readonly JobGiver_ExitMapBest exitGiver = new JobGiver_ExitMapBest();
+
+        public static int FreeSeats(Pawn v) =>
+            v is VehiclePawn vp && vp.handlers != null ? vp.handlers.Sum(h => Mathf.Max(0, h.role.Slots - h.thingOwner.Count)) : 0;
+
+        public static bool TryBoard(Pawn v, Pawn p) => v is VehiclePawn vp && vp.Spawned && vp.TryAddPawn(p);
+
+        public static bool IsExiting(Pawn v) => v.CurJob != null && v.CurJob.exitMapOnArrival;
+
+        /// <summary>Le véhicule quitte la carte (avec tout ce qu'il a à bord). Faux si impossible pour l'instant.</summary>
+        public static bool ExitMap(Pawn v)
+        {
+            if (v is not VehiclePawn vp || !vp.Spawned) return false;
+            if (IsExiting(v)) return true;
+            if (IsDeployed(v)) { Undeploy(v); return false; }
+            if (IsDeploying(v)) return false;
+            Ready(v);
+            if (!vp.CanMoveFinal) return false;
+            Verse.AI.Job j = exitGiver.TryIssueJobPackage(vp, default(Verse.AI.JobIssueParams)).Job;
+            if (j == null) return false;
+            vp.jobs.StartJob(j, Verse.AI.JobCondition.InterruptForced);
+            return true;
         }
 
         public static void StartDeploy(Pawn v)
@@ -418,7 +505,7 @@ namespace HardenedRaids
         {
             __state = null;
             if (!VehicleGate.Active || startingPawns == null || faction == null || faction.IsPlayer || !faction.HostileTo(Faction.OfPlayer)) return;
-            if (lordJob is LordJob_HRConvoy || lordJob is LordJob_HRTurretCrew || VehicleCompat.IsVehicleLordJob(lordJob)) return;
+            if (lordJob is LordJob_HRConvoy || lordJob is LordJob_HRTurretCrew || lordJob is LordJob_HRBoard || VehicleCompat.IsVehicleLordJob(lordJob)) return;
             List<Pawn> all = startingPawns.ToList();
             List<Pawn> vehicles = all.Where(VehicleGate.IsVehicle).ToList();
             if (vehicles.Count == 0) { startingPawns = all; return; }
