@@ -33,6 +33,9 @@ namespace HardenedRaids
         public static float VehiclePointShare = 0.25f; // part max des points dépensée en véhicules
         public static float VehicleMinTier = 3f;
         public static int MaxVehicles = 6;
+        public static bool EnableSupportTeams = true;
+        public static float SupportMinTier = 3f;
+        public static float SupportShare = 0.12f;  // part des raiders qui montent le camp d'appui
 
         public static bool VerboseLog = true;
 
@@ -58,6 +61,9 @@ namespace HardenedRaids
             Scribe_Values.Look(ref VehiclePointShare, "VehiclePointShare", 0.25f);
             Scribe_Values.Look(ref VehicleMinTier, "VehicleMinTier", 3f);
             Scribe_Values.Look(ref MaxVehicles, "MaxVehicles", 6);
+            Scribe_Values.Look(ref EnableSupportTeams, "EnableSupportTeams", true);
+            Scribe_Values.Look(ref SupportMinTier, "SupportMinTier", 3f);
+            Scribe_Values.Look(ref SupportShare, "SupportShare", 0.12f);
             Scribe_Values.Look(ref VerboseLog, "VerboseLog", true);
         }
 
@@ -104,9 +110,13 @@ namespace HardenedRaids
             l.GapLine();
 
             l.Label("<b>Sièges et véhicules</b>");
-            l.CheckboxLabeled("Camps de siège renforcés (artillerie des mods, tranchées, tourelles)", ref SiegeUpgrade);
+            l.CheckboxLabeled("Camps de siège renforcés (artillerie, tourelles des mods, tranchées face à la base)", ref SiegeUpgrade);
             MaxSiegeArtillery = (int)l.SliderLabeled($"Pièces d'artillerie max par siège : {MaxSiegeArtillery}", MaxSiegeArtillery, 2, 16, 0.5f);
             MaxSiegeTurrets = (int)l.SliderLabeled($"Tourelles max par siège : {MaxSiegeTurrets}", MaxSiegeTurrets, 0, 12, 0.5f);
+            l.CheckboxLabeled("Équipes d'appui pendant les assauts (camp avancé avec tourelles)", ref EnableSupportTeams,
+                "Une partie des raiders industriels+ arrivant par le bord installe un camp de tir (comme un siège) pendant que les autres attaquent.");
+            SupportMinTier = Mathf.Round(l.SliderLabeled($"Palier minimum des équipes d'appui : {SupportMinTier:F0}", SupportMinTier, 1f, 6f, 0.5f));
+            SupportShare = Mathf.Round(l.SliderLabeled($"Part des raiders en appui : {SupportShare:P0}", SupportShare, 0.05f, 0.4f, 0.5f) * 20f) / 20f;
             l.CheckboxLabeled("Véhicules de combat ennemis (Vehicle Framework, expérimental)", ref EnableVehicles,
                 "Les raiders industriels+ arrivant à pied par le bord de la carte peuvent amener des blindés VVE.");
             VehiclePointShare = Mathf.Round(l.SliderLabeled($"Part des points en véhicules : {VehiclePointShare:P0}", VehiclePointShare, 0.05f, 0.5f, 0.5f) * 20f) / 20f;
@@ -143,6 +153,7 @@ namespace HardenedRaids
         {
             PointsPatches.ApplyCurves();
             Loadouts.BuildCaches();
+            try { Patch_SiegeBlueprints.EnsureCatalog(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] catalogue de siège : " + e.Message); }
         }
     }
 

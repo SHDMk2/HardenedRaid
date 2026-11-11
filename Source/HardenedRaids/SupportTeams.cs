@@ -1,0 +1,155 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using HarmonyLib;
+using RimWorld;
+using UnityEngine;
+using Verse;
+using Verse.AI.Group;
+
+namespace HardenedRaids
+{
+    /// <summary>
+    /// Équipe d'appui : pendant un assaut d'un raid industriel+ de haut palier, une partie des raiders monte un camp
+    /// avancé (lord de siège vanilla, enrichi par <see cref="Patch_SiegeBlueprints"/>) : tourelles servies,
+    /// artillerie et couverture tournées vers la base, matériaux livrés par capsule.
+    /// </summary>
+    public static class SupportTeams
+    {
+        public static void TryDeploy(IncidentParms parms, List<Pawn> pawns)
+        {
+            if (!HRSettings.EnableSupportTeams || parms?.target is not Map map || parms.faction == null || pawns == null) return;
+            if (parms.raidStrategy?.Worker == null || parms.raidStrategy.Worker is RaidStrategyWorker_Siege) return;
+            if (parms.faction.def.techLevel < TechLevel.Industrial || !parms.faction.def.humanlikeFaction) return;
+            if (parms.raidArrivalMode?.workerClass == null || !parms.raidArrivalMode.workerClass.Name.Contains("Edge")) return;
+            float x = Tiers.TierX(parms.faction.def, parms.points);
+            if (x < HRSettings.SupportMinTier) return;
+
+            List<Pawn> cands = pawns.Where(p => p.Spawned && !p.Downed && p.RaceProps.Humanlike && !VehicleGate.IsVehicle(p)
+                                                && !p.kindDef.factionLeader
+                                                && !(p.equipment?.Primary != null && Loadouts.IsDestructive(p.equipment.Primary.def))
+                                                && !p.WorkTypeIsDisabled(WorkTypeDefOf.Construction) && !p.WorkTypeIsDisabled(WorkTypeDefOf.Firefighter))
+                .ToList();
+            if (cands.Count < 10) return;
+            int n = Mathf.Clamp(Mathf.RoundToInt(cands.Count * HRSettings.SupportShare), 3, 20);
+
+            IntVec3 from = parms.spawnCenter.IsValid ? parms.spawnCenter : cands[0].Position;
+            IntVec3 spot = RCellFinder.FindSiegePositionFrom(from, map, errorOnFail: false);
+            if (!spot.IsValid)
+            {
+                HRLog.Msg("équipe d'appui : aucune position de camp trouvée.");
+                return;
+            }
+            List<Pawn> team = cands.InRandomOrder().Take(n).ToList();
+            foreach (Pawn p in team) pawns.Remove(p);
+            float blueprintPoints = Mathf.Max(60f, parms.points * 0.25f);
+            LordMaker.MakeNewLord(parms.faction, new LordJob_Siege(parms.faction, spot, blueprintPoints), map, team);
+            Messages.Message($"Une équipe d'appui de {parms.faction.Name} ({team.Count} hommes) installe des positions de tir.",
+                new TargetInfo(spot, map), MessageTypeDefOf.ThreatBig);
+            HRLog.Msg($"équipe d'appui : {team.Count} raiders, camp en {spot} (palier {x:F1}).");
+        }
+    }
+
+    [HarmonyPatch(typeof(IncidentWorker_Raid), nameof(IncidentWorker_Raid.TryGenerateRaidInfo))]
+    public static class Patch_SupportTeam
+    {
+        [HarmonyPriority(Priority.VeryLow)] // après l'équipage des véhicules
+        public static void Postfix(IncidentParms parms, ref List<Pawn> pawns, bool debugTest, bool __result)
+        {
+            if (!__result || debugTest) return;
+            try { SupportTeams.TryDeploy(parms, pawns); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] équipe d'appui : " + e); }
+        }
+    }
+
+    /// <summary>
+    /// Munitions des tourelles ennemies : tant qu'une tourelle servie a son servant (ou qu'une tourelle automatique
+    /// existe), on remplit son chargeur CE / sa charge d'obus / son carburant. Tuer le servant arrête le tir.
+    /// </summary>
+    public class MapComponent_HostileTurretSupply : MapComponent
+    {
+        private static PropertyInfo compAmmoProp;
+        private static bool reflected;
+        private static PropertyInfo curMag, magSize, curAmmo, props;
+        private static MethodInfo resetAmmo;
+        private static FieldInfo ammoSetField, ammoTypesField, ammoField;
+
+        public MapComponent_HostileTurretSupply(Map map) : base(map) { }
+
+        public override void MapComponentTick()
+        {
+            if (Find.TickManager.TicksGame % 300 != 0) return;
+            try
+            {
+                foreach (Building b in map.listerBuildings.allBuildingsNonColonist)
+                {
+                    if (b is not Building_Turret t || t.Faction == null || t.Faction.IsPlayer || !t.Faction.HostileTo(Faction.OfPlayer)) continue;
+                    CompMannable man = t.GetComp<CompMannable>();
+                    if (man != null && !man.MannedNow) continue;
+                    Supply(t);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.WarningOnce("[Hardened Raids] ravitaillement des tourelles : " + e, 0x48524154);
+            }
+        }
+
+        private static void Reflect(Type turretType)
+        {
+            if (reflected) return;
+            reflected = true;
+            compAmmoProp = turretType.GetProperty("CompAmmo");
+            Type ammoUser = compAmmoProp?.PropertyType;
+            if (ammoUser == null) return;
+            curMag = ammoUser.GetProperty("CurMagCount");
+            magSize = ammoUser.GetProperty("MagSize");
+            curAmmo = ammoUser.GetProperty("CurrentAmmo");
+            props = ammoUser.GetProperty("Props");
+            resetAmmo = ammoUser.GetMethod("ResetAmmoCount");
+            ammoSetField = props?.PropertyType.GetField("ammoSet");
+            ammoTypesField = ammoSetField?.FieldType.GetField("ammoTypes");
+            Type linkType = ammoTypesField?.FieldType.GetGenericArguments().FirstOrDefault();
+            ammoField = linkType?.GetField("ammo");
+        }
+
+        private static void Supply(Building_Turret t)
+        {
+            // Combat Extended : chargeur
+            if (t.GetType().GetProperty("CompAmmo") != null)
+            {
+                if (!reflected) Reflect(t.GetType());
+                object comp = t.GetType().GetProperty("CompAmmo")?.GetValue(t);
+                if (comp != null && curMag != null && magSize != null && resetAmmo != null)
+                {
+                    int mag = (int)magSize.GetValue(comp), cur = (int)curMag.GetValue(comp);
+                    if (mag > 0 && cur <= mag / 4)
+                    {
+                        object ammo = curAmmo?.GetValue(comp);
+                        if (ammo == null && props != null && ammoSetField != null && ammoTypesField != null && ammoField != null)
+                        {
+                            object set = ammoSetField.GetValue(props.GetValue(comp));
+                            if (set != null && ammoTypesField.GetValue(set) is System.Collections.IList links && links.Count > 0)
+                                ammo = ammoField.GetValue(links[0]);
+                        }
+                        resetAmmo.Invoke(comp, new[] { ammo });
+                    }
+                }
+            }
+
+            // vanilla : obus (mortier) et carburant / canon
+            if (t is Building_TurretGun g && g.gun != null)
+            {
+                CompChangeableProjectile shell = g.gun.TryGetComp<CompChangeableProjectile>();
+                if (shell != null && !shell.Loaded)
+                {
+                    ThingDef s = TurretGunUtility.TryFindRandomShellDef(t.def, false, false, true, t.Faction.def.techLevel, false, 250f, t.Faction);
+                    if (s != null) shell.LoadShell(s, 1);
+                }
+            }
+            CompRefuelable fuel = t.GetComp<CompRefuelable>();
+            if (fuel != null && fuel.FuelPercentOfMax < 0.3f) fuel.Refuel(fuel.Props.fuelCapacity - fuel.Fuel);
+        }
+    }
+}

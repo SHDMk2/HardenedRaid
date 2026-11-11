@@ -28,6 +28,7 @@ autre emplacement : `dotnet build -c Release -p:VFDir=/chemin/vers/Assemblies`.
 | `CECompat.cs` | munitions Combat Extended (par réflexion, optionnel) |
 | `Waves.cs` | vagues différées (GameComponent sauvegardé) |
 | `AIPatches.cs` | poids des stratégies smart/brèche/sape, grille d'évitement des tourelles |
-| `SiegePatches.cs` | camps de siège : artillerie des mods, tranchées/sandbags, tourelles autonomes |
+| `SiegePatches.cs` | camps de siège : artillerie et tourelles des mods (servies ou auto), couverture tournée vers la base |
+| `SupportTeams.cs` | équipes d'appui (camp avancé pendant un assaut) + ravitaillement des tourelles ennemies |
 | `VehicleCompat.cs` | véhicules ennemis via Vehicle Framework (seule classe qui touche aux types VF) |
 | `DebugActions.cs` | mode dev → « Hardened Raids » → aperçu des plans / vagues en attente |
