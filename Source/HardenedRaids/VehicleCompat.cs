@@ -80,6 +80,55 @@ namespace HardenedRaids
         public static Verse.AI.PawnDuty TravelDuty(IntVec3 c) => new Verse.AI.PawnDuty(DutyDefOf_Vehicles.TravelOrWaitVehicle, c);
         public static Verse.AI.PawnDuty AssaultDuty() => new Verse.AI.PawnDuty(DutyDefOf_Vehicles.VF_RangedAggressive);
 
+        // ------------------------------------------------------------ appui-feu (lance-roquettes Burya...)
+        private static readonly System.Reflection.FieldInfo deployTicksField = HarmonyLib.AccessTools.Field(typeof(CompVehicleTurrets), "deployTicks");
+
+        private static bool Manual(VehicleTurret t) => !t.CanAutoTarget || t.deployment == DeploymentType.Deployed;
+
+        /// <summary>Véhicule dont une tourelle ne tire pas seule : tir sur ordre et/ou déploiement obligatoire.</summary>
+        public static bool IsFireSupport(Pawn v) =>
+            v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Turrets.Any(Manual);
+
+        public static bool IsDeployed(Pawn v) => v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Deployed;
+        public static bool IsDeploying(Pawn v) => v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Deploying;
+
+        /// <summary>Une cible à portée d'une tourelle manuelle (qu'on soit déployé ou non).</summary>
+        public static bool TargetInRange(Pawn v)
+        {
+            if (v is not VehiclePawn vp || vp.CompVehicleTurrets == null) return false;
+            foreach (VehicleTurret t in vp.CompVehicleTurrets.Turrets)
+                if (Manual(t) && t.HasAmmo && t.TryGetTarget(out _)) return true;
+            return false;
+        }
+
+        public static void StartDeploy(Pawn v)
+        {
+            if (v is not VehiclePawn vp || vp.CompVehicleTurrets == null || vp.CompVehicleTurrets.Deployed || vp.CompVehicleTurrets.Deploying) return;
+            if (vp.vehiclePather.Moving) vp.vehiclePather.StopDead();
+            vp.jobs.StartJob(new Verse.AI.Job(JobDefOf_Vehicles.DeployVehicle, vp), Verse.AI.JobCondition.InterruptForced);
+            deployTicksField?.SetValue(vp.CompVehicleTurrets, vp.CompVehicleTurrets.DeployTicks);
+        }
+
+        public static void Undeploy(Pawn v)
+        {
+            if (v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Deployed && !vp.CompVehicleTurrets.Deploying)
+                vp.CompVehicleTurrets.ToggleDeployment();
+        }
+
+        /// <summary>Désigne une cible à chaque tourelle manuelle prête. Retourne vrai si au moins une tire.</summary>
+        public static bool ManualFire(Pawn v)
+        {
+            if (v is not VehiclePawn vp || vp.CompVehicleTurrets == null) return false;
+            bool firing = false;
+            foreach (VehicleTurret t in vp.CompVehicleTurrets.Turrets)
+            {
+                if (!Manual(t) || !t.DeploymentSatisfied || !t.HasAmmo) continue;
+                if (t.targetInfo.IsValid && !(t.targetInfo.Thing?.Destroyed ?? false) && !(t.targetInfo.Pawn?.Downed ?? false)) { firing = true; continue; }
+                if (t.TryGetTarget(out LocalTargetInfo target)) { t.SetTarget(target); firing = true; }
+            }
+            return firing;
+        }
+
         /// <summary>Moteur démarré (sinon VF refuse de bouger) et tir automatique de toutes les tourelles.</summary>
         public static void Ready(Pawn v)
         {
@@ -226,7 +275,15 @@ namespace HardenedRaids
 
             // 2. camions pour tout le reste
             List<VehicleDef> trucks = TransportCatalog().Where(v => v.techLevel <= parms.faction.def.techLevel || v.techLevel == TechLevel.Undefined).ToList();
-            VehicleDef truckDef = trucks.OrderByDescending(v => Seats(v, false)).Take(3).RandomElementWithFallback();
+            // gros raid : le plus gros camion (Wisent...) ; petit raid : le plus petit qui embarque tout le monde
+            VehicleDef truckDef = null;
+            if (trucks.Count > 0)
+            {
+                int biggest = trucks.Max(v => Seats(v, false));
+                truckDef = pool.Count > biggest
+                    ? trucks.Where(v => Seats(v, false) == biggest).RandomElement()
+                    : trucks.Where(v => Seats(v, false) >= pool.Count).OrderBy(v => Seats(v, false)).First();
+            }
             int nTrucks = 0;
             while (truckDef != null && pool.Count > 0 && nTrucks < HRSettings.MaxTransports)
             {
