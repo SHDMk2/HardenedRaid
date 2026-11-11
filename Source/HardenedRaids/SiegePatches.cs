@@ -93,6 +93,13 @@ namespace HardenedRaids
                       + $"{coverDefs.Count} couvertures. Tourelles : {string.Join(", ", turretDefs.Select(d => d.defName))}");
         }
 
+        /// <summary>Tourelles autorisées pour la faction, au plus maxSize×maxSize.</summary>
+        public static List<ThingDef> TurretDefsFor(Faction f, int maxSize)
+        {
+            EnsureCatalog();
+            return turretDefs.Where(d => TechOk(d, f) && d.size.x <= maxSize && d.size.z <= maxSize).ToList();
+        }
+
         private static ThingDef StuffFor(ThingDef d) => d.MadeFromStuff ? (GenStuff.AllowedStuffsFor(d).Contains(ThingDefOf.Steel) ? ThingDefOf.Steel : GenStuff.DefaultStuffFor(d)) : null;
 
         /// <summary>Plus le palier est haut, plus on favorise le matériel cher (gros calibres).</summary>

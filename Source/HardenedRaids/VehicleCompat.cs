@@ -72,16 +72,43 @@ namespace HardenedRaids
 
         public static bool IsVehicle(Pawn p) => p is VehiclePawn;
 
-        /// <summary>
-        /// Case libre pour tout le rectangle du véhicule, près du point d'arrivée. VF ne construit la grille de
-        /// passage d'un type de véhicule qu'à sa première apparition sur la carte : sans la forcer, toutes les
-        /// cases sont refusées et le véhicule était détruit en silence (cause de l'absence de blindés).
-        /// </summary>
-        private static bool FindVehicleCell(VehicleDef vd, Map map, IntVec3 center, Rot4 rot, HashSet<IntVec3> taken, out IntVec3 cell)
+        // ------------------------------------------------------------ petites façades pour Convoy.cs (sans types VF)
+        public static bool HasTurrets(Pawn v) => v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Turrets.Count > 0;
+        public static bool CanMove(Pawn v) => v is VehiclePawn vp && vp.CanMoveFinal;
+        public static IEnumerable<Pawn> PawnsAboard(Pawn v) => v is VehiclePawn vp ? vp.AllPawnsAboard : Enumerable.Empty<Pawn>();
+        public static void Disembark(Pawn v, Pawn p) { if (v is VehiclePawn vp) vp.DisembarkPawn(p); }
+        public static Verse.AI.PawnDuty TravelDuty(IntVec3 c) => new Verse.AI.PawnDuty(DutyDefOf_Vehicles.TravelOrWaitVehicle, c);
+        public static Verse.AI.PawnDuty AssaultDuty() => new Verse.AI.PawnDuty(DutyDefOf_Vehicles.VF_RangedAggressive);
+
+        /// <summary>Moteur démarré (sinon VF refuse de bouger) et tir automatique de toutes les tourelles.</summary>
+        public static void Ready(Pawn v)
         {
-            // VF génère la grille de passage d'un type de véhicule à la demande : sans elle tout est "infranchissable"
+            if (v is not VehiclePawn vp || !vp.Spawned) return;
+            try
+            {
+                if (!vp.ignition.Drafted && vp.CanMoveFinal) vp.ignition.Drafted = true;
+                if (vp.CompVehicleTurrets != null)
+                    foreach (VehicleTurret t in vp.CompVehicleTurrets.Turrets)
+                        if (!t.AutoTarget && t.CanAutoTarget) t.AutoTarget = true;
+            }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] démarrage du véhicule : " + e.Message, vp.thingIDNumber ^ 0x5652); }
+        }
+
+        public static IntVec3? FindStandCell(Pawn v, Map map, IntVec3 want, IntVec3 target, HashSet<IntVec3> taken)
+        {
+            if (v is not VehiclePawn vp) return null;
+            Rot4 rot = Rot4.FromAngleFlat((target - want).AngleFlat);
+            return FindVehicleCell(vp.VehicleDef, map, want, rot, taken, out IntVec3 c, requireNoPawn: false) ? c : (IntVec3?)null;
+        }
+
+        /// <summary>
+        /// Case libre pour tout le rectangle du véhicule. VF ne construit la grille de passage d'un type de
+        /// véhicule qu'à sa première apparition sur la carte : sans la forcer, toutes les cases sont refusées.
+        /// </summary>
+        private static bool FindVehicleCell(VehicleDef vd, Map map, IntVec3 center, Rot4 rot, HashSet<IntVec3> taken, out IntVec3 cell, bool requireNoPawn = true)
+        {
             Vehicles.World.Ext_Caravan.EnsureMapInitialized(vd, map);
-            int num = GenRadial.NumCellsInRadius(40f);
+            int num = GenRadial.NumCellsInRadius(56f);
             for (int i = 0; i < num; i++)
             {
                 IntVec3 c = center + GenRadial.RadialPattern[i];
@@ -91,7 +118,7 @@ namespace HardenedRaids
                 bool ok = true;
                 foreach (IntVec3 x in r)
                 {
-                    if (taken.Contains(x) || !x.Standable(vd, map) || x.Fogged(map) || x.GetFirstPawn(map) != null) { ok = false; break; }
+                    if (taken.Contains(x) || !x.Standable(vd, map) || (requireNoPawn && (x.Fogged(map) || x.GetFirstPawn(map) != null))) { ok = false; break; }
                 }
                 if (!ok) continue;
                 if (!map.reachability.CanReach(c, map.Center, Verse.AI.PathEndMode.OnCell, TraverseParms.For(TraverseMode.PassDoors))) continue;
@@ -103,65 +130,141 @@ namespace HardenedRaids
             return false;
         }
 
-        /// <summary>Fait apparaître les véhicules près du point d'arrivée et y installe un équipage pris parmi les raiders.</summary>
+        // ------------------------------------------------------------ transports
+        private static List<ThingDef> transports;
+
+        private static int Seats(VehicleDef vd, bool passengersOnly) =>
+            vd.properties?.roles?.Where(r => !passengersOnly || r.HandlingTypes == HandlingType.None).Sum(r => r.slots) ?? 0;
+
+        private static List<VehicleDef> TransportCatalog()
+        {
+            if (transports == null)
+            {
+                transports = DefDatabase<VehicleDef>.AllDefsListForReading
+                    .Where(v => v.type == VehicleType.Land && (v.vehicleCategory & VehicleCategory.Combat) == 0
+                                && (v.enabled & VehicleEnabled.For.Raiders) != 0 && Seats(v, false) >= 3
+                                && v.properties.roles.Any(r => (r.HandlingTypes & HandlingType.Movement) != 0))
+                    .Cast<ThingDef>().ToList();
+                HRLog.Msg($"transports de troupes disponibles : {string.Join(", ", transports.Select(v => $"{v.defName} ({Seats((VehicleDef)v, false)} places)"))}");
+            }
+            return transports.Cast<VehicleDef>().ToList();
+        }
+
+        /// <summary>
+        /// Convoi : blindés achetés (pilote + tireurs restent, passagers débarquent) puis assez de camions pour
+        /// embarquer tout le reste de l'infanterie (tous débarquent). Les embarqués restent membres du lord
+        /// d'infanterie du raid (voir Patch_VehicleLord).
+        /// </summary>
         public static void SpawnVehicles(List<ThingDef> defs, IncidentParms parms, List<Pawn> pawns)
         {
             if (parms.target is not Map map) return;
             IntVec3 center = parms.spawnCenter.IsValid ? parms.spawnCenter : pawns.FirstOrDefault(p => p.Spawned)?.Position ?? IntVec3.Invalid;
             if (!center.IsValid) { HRLog.Msg("véhicules : pas de point d'arrivée."); return; }
 
-            // équipage : des fantassins "de base" (pas le chef, pas les porteurs d'armes de brèche de préférence)
-            List<Pawn> pool = pawns.Where(p => p.Spawned && !p.Downed && p.RaceProps.Humanlike && !p.kindDef.factionLeader)
-                .OrderBy(p => p.equipment?.Primary != null && Loadouts.IsDestructive(p.equipment.Primary.def) ? 1 : 0)
+            // équipage des blindés : des fantassins "de base" (pas le chef, pas les porteurs d'armes de brèche)
+            List<Pawn> pool = pawns.Where(p => p.Spawned && !p.Downed && p.RaceProps.Humanlike && !(p is VehiclePawn))
+                .OrderBy(p => p.kindDef.factionLeader ? 2 : (p.equipment?.Primary != null && Loadouts.IsDestructive(p.equipment.Primary.def) ? 1 : 0))
                 .ToList();
             IntVec3 target = Patch_SiegeBlueprints.ThreatTarget(map, center);
+            Rot4 rot = Rot4.FromAngleFlat((target - center).AngleFlat);
             var taken = new HashSet<IntVec3>();
-            int spawned = 0;
+            var vehicles = new List<VehiclePawn>();
+            var dismount = new List<Pawn>();
+
+            VehiclePawn Spawn(VehicleDef vd)
+            {
+                if (!FindVehicleCell(vd, map, center, rot, taken, out IntVec3 cell))
+                {
+                    HRLog.Msg($"véhicule {vd.defName} : aucune place libre près de {center}.");
+                    return null;
+                }
+                VehiclePawn v = VehicleSpawner.GenerateVehicle(new VehicleGenerationRequest(vd, parms.faction, randomizeColors: true, randomizeMask: true));
+                GenSpawn.Spawn(v, cell, map, rot);
+                return v;
+            }
+
+            bool Board(VehiclePawn v, VehicleRoleHandler h, bool leaves)
+            {
+                Pawn crew = pool.FirstOrDefault(p => h.role.HandlingTypes == HandlingType.None || h.CanOperateRole(p));
+                if (crew == null) return false;
+                pool.Remove(crew);
+                if (!v.TryAddPawn(crew, h)) return false;
+                pawns.Remove(crew);
+                if (leaves) dismount.Add(crew);
+                return true;
+            }
+
+            // 1. blindés
             foreach (ThingDef d in defs)
             {
                 if (d is not VehicleDef vd) continue;
-                VehiclePawn vehicle = null;
+                VehiclePawn v = null;
                 try
                 {
-                    Rot4 rot = Rot4.FromAngleFlat((target - center).AngleFlat);
-                    if (!FindVehicleCell(vd, map, center, rot, taken, out IntVec3 cell))
-                    {
-                        HRLog.Msg($"véhicule {vd.defName} : aucune place libre près de {center}.");
-                        continue;
-                    }
-                    vehicle = VehicleSpawner.GenerateVehicle(new VehicleGenerationRequest(vd, parms.faction, randomizeColors: true, randomizeMask: true));
-                    GenSpawn.Spawn(vehicle, cell, map, rot);
-
-                    // équipage : uniquement les rôles qui conduisent / servent une tourelle
+                    v = Spawn(vd);
+                    if (v == null) continue;
                     int crewed = 0;
-                    foreach (VehicleRoleHandler h in vehicle.handlers.Where(h => h.role.HandlingTypes != HandlingType.None))
-                    {
-                        while (h.AreSlotsAvailable && pool.Count > 0)
-                        {
-                            Pawn crew = pool.FirstOrDefault(h.CanOperateRole);
-                            if (crew == null) break;
-                            pool.Remove(crew);
-                            if (vehicle.TryAddPawn(crew, h)) { pawns.Remove(crew); crewed++; }
-                        }
-                    }
+                    foreach (VehicleRoleHandler h in v.handlers.Where(h => h.role.HandlingTypes != HandlingType.None))
+                        while (h.AreSlotsAvailable && pool.Count > 0 && Board(v, h, false)) crewed++;
                     if (crewed == 0)
                     {
-                        HRLog.Msg($"véhicule {vd.defName} : aucun équipage possible ({vehicle.handlers.Count} postes, {pool.Count} raiders disponibles) -> retiré.");
-                        vehicle.Destroy();
+                        HRLog.Msg($"véhicule {vd.defName} : aucun équipage possible ({v.handlers.Count} postes, {pool.Count} raiders disponibles) -> retiré.");
+                        v.Destroy();
                         continue;
                     }
-                    Supply(vehicle);
-                    pawns.Add(vehicle);
-                    spawned++;
-                    HRLog.Msg($"véhicule {vd.label} en {cell} : {crewed} membres d'équipage.");
+                    foreach (VehicleRoleHandler h in v.handlers.Where(h => h.role.HandlingTypes == HandlingType.None))
+                        while (h.AreSlotsAvailable && pool.Count > 0 && Board(v, h, true)) { }
+                    vehicles.Add(v);
                 }
                 catch (Exception e)
                 {
                     Log.Warning($"[Hardened Raids] véhicule {d.defName} : {e}");
-                    if (vehicle != null && !vehicle.Destroyed && !pawns.Contains(vehicle)) vehicle.Destroy();
+                    if (v != null && !v.Destroyed && !vehicles.Contains(v)) v.Destroy();
                 }
             }
-            HRLog.Msg($"{spawned}/{defs.Count} véhicule(s) pour {parms.faction.Name}.");
+            if (vehicles.Count == 0) { HRLog.Msg($"0/{defs.Count} véhicule(s) pour {parms.faction.Name}."); return; }
+
+            // 2. camions pour tout le reste
+            List<VehicleDef> trucks = TransportCatalog().Where(v => v.techLevel <= parms.faction.def.techLevel || v.techLevel == TechLevel.Undefined).ToList();
+            VehicleDef truckDef = trucks.OrderByDescending(v => Seats(v, false)).Take(3).RandomElementWithFallback();
+            int nTrucks = 0;
+            while (truckDef != null && pool.Count > 0 && nTrucks < HRSettings.MaxTransports)
+            {
+                VehiclePawn t = null;
+                try
+                {
+                    t = Spawn(truckDef);
+                    if (t == null) break;
+                    int aboard = 0;
+                    foreach (VehicleRoleHandler h in t.handlers.OrderByDescending(h => (h.role.HandlingTypes & HandlingType.Movement) != 0 ? 1 : 0))
+                        while (h.AreSlotsAvailable && pool.Count > 0 && Board(t, h, true)) aboard++;
+                    if (aboard == 0 || !t.CanMoveFinal)
+                    {
+                        foreach (Pawn p in t.AllPawnsAboard.ToList()) { t.DisembarkPawn(p); dismount.Remove(p); pawns.Add(p); }
+                        t.Destroy();
+                        break;
+                    }
+                    vehicles.Add(t);
+                    nTrucks++;
+                }
+                catch (Exception e)
+                {
+                    Log.Warning($"[Hardened Raids] camion {truckDef.defName} : {e}");
+                    if (t != null && !t.Destroyed && !vehicles.Contains(t)) t.Destroy();
+                    break;
+                }
+            }
+
+            foreach (VehiclePawn v in vehicles) { Supply(v); Ready(v); pawns.Add(v); }
+            ConvoyHandoff.Pending = new ConvoyHandoff
+            {
+                vehicles = vehicles.Cast<Pawn>().ToList(),
+                dismount = dismount,
+                deployTurrets = HRSettings.TruckTurrets && parms.raidStrategy != null && parms.raidStrategy.defName.Contains("Smart"),
+                tierX = Tiers.TierX(parms.faction.def, parms.points),
+            };
+            HRLog.Msg($"convoi {parms.faction.Name} : {vehicles.Count - nTrucks} blindé(s), {nTrucks} camion(s) {(truckDef != null ? "(" + truckDef.label + ")" : "")}, "
+                      + $"{dismount.Count} fantassins embarqués, {pool.Count} à pied.");
         }
 
         /// <summary>Plein de carburant et munitions pour chaque tourelle.</summary>
@@ -241,6 +344,16 @@ namespace HardenedRaids
     }
 
     // ---------------------------------------------------------------- lord séparé pour les véhicules
+    /// <summary>Convoi en attente : rempli à l'apparition des véhicules, consommé à la création du lord du raid.</summary>
+    public class ConvoyHandoff
+    {
+        public static ConvoyHandoff Pending;
+        public List<Pawn> vehicles;
+        public List<Pawn> dismount;
+        public bool deployTurrets;
+        public float tierX;
+    }
+
     [HarmonyLib.HarmonyPatch(typeof(LordMaker), nameof(LordMaker.MakeNewLord))]
     public static class Patch_VehicleLord
     {
@@ -248,25 +361,70 @@ namespace HardenedRaids
         {
             __state = null;
             if (!VehicleGate.Active || startingPawns == null || faction == null || faction.IsPlayer || !faction.HostileTo(Faction.OfPlayer)) return;
-            if (VehicleCompat.IsVehicleLordJob(lordJob)) return;
+            if (lordJob is LordJob_HRConvoy || lordJob is LordJob_HRTurretCrew || VehicleCompat.IsVehicleLordJob(lordJob)) return;
             List<Pawn> all = startingPawns.ToList();
-            List<Pawn> vehicles = all.Where(VehicleCompat.IsVehicle).ToList();
+            List<Pawn> vehicles = all.Where(VehicleGate.IsVehicle).ToList();
             if (vehicles.Count == 0) { startingPawns = all; return; }
-            startingPawns = all.Where(p => !vehicles.Contains(p)).ToList();
+            List<Pawn> infantry = all.Where(p => !vehicles.Contains(p)).ToList();
+            // les fantassins embarqués font partie du lord du raid dès le départ (ils le gardent en débarquant)
+            ConvoyHandoff h = ConvoyHandoff.Pending;
+            if (h != null && h.vehicles.Any(vehicles.Contains))
+                foreach (Pawn p in h.dismount) if (!infantry.Contains(p) && p.GetLord() == null) infantry.Add(p);
+            startingPawns = infantry;
             __state = vehicles;
         }
 
-        public static void Postfix(Faction faction, Map map, List<Pawn> __state)
+        public static void Postfix(Faction faction, Map map, List<Pawn> __state, Lord __result)
         {
             if (__state == null || __state.Count == 0) return;
+            ConvoyHandoff h = ConvoyHandoff.Pending;
+            ConvoyHandoff.Pending = null;
             try
             {
-                LordMaker.MakeNewLord(faction, VehicleCompat.ArmoredLordJob(faction), map, __state);
+                bool mine = h != null && h.vehicles.Any(__state.Contains);
+                LordMaker.MakeNewLord(faction, new LordJob_HRConvoy(faction, __result, mine ? h.dismount : null, mine && h.deployTurrets, mine ? h.tierX : 3f), map, __state);
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] lord blindé : " + e.Message);
+                Log.Warning("[Hardened Raids] lord du convoi : " + e);
             }
+        }
+    }
+
+    /// <summary>
+    /// Débarquement : VF met le fantassin dans le lord du véhicule (et le retire du sien). Pour nos convois on le
+    /// fait apparaître nous-mêmes en lui laissant son lord d'infanterie ; un équipage éjecté sans lord le rejoint.
+    /// Patch manuel (HardenedRaidsMod) : la méthode est dans Vehicles.dll.
+    /// </summary>
+    public static class Patch_SpawnNearVehicle
+    {
+        public static bool Prefix(Pawn vehicle, Pawn pawn)
+        {
+            try
+            {
+                if (pawn == null || vehicle == null || pawn.Spawned || !vehicle.Spawned) return true;
+                if (vehicle.GetLord()?.LordJob is not LordJob_HRConvoy convoy) return true;
+                Map map = vehicle.Map;
+                CellRect r = vehicle.OccupiedRect().ExpandedBy(1);
+                IntVec3 cell = r.EdgeCells.Where(c => c.InBounds(map) && c.Standable(map) && c.GetFirstPawn(map) == null).RandomElementWithFallback(IntVec3.Invalid);
+                if (!cell.IsValid) cell = CellFinder.RandomClosewalkCellNear(vehicle.Position, map, 6);
+                GenSpawn.Spawn(pawn, cell, map);
+                if (pawn.GetLord() == null) convoy.InfantryLord(map).AddPawn(pawn);
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.WarningOnce("[Hardened Raids] débarquement : " + e.Message, 0x44454241);
+                return true;
+            }
+        }
+
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            if (!VehicleGate.Active) return;
+            var m = HarmonyLib.AccessTools.Method("Vehicles.Ext_Vehicles:SpawnPawnNearVehicle");
+            if (m == null) { Log.Warning("[Hardened Raids] Ext_Vehicles.SpawnPawnNearVehicle introuvable : le débarquement utilisera le lord de VF."); return; }
+            harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(Prefix)));
         }
     }
 }
