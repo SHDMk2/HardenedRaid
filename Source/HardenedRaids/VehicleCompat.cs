@@ -258,6 +258,25 @@ namespace HardenedRaids
             return true;
         }
 
+        /// <summary>Nombre de cases entre l'emprise du véhicule et le bord le plus proche.</summary>
+        public static int EdgeDistance(Pawn v)
+        {
+            CellRect r = v.OccupiedRect(); IntVec3 s = v.Map.Size;
+            return Math.Min(Math.Min(r.minX, r.minZ), Math.Min(s.x - 1 - r.maxX, s.z - 1 - r.maxZ));
+        }
+
+        /// <summary>
+        /// Sortie forcée : VF ne fait sortir un véhicule que si son emprise touche le bord à la fin du Goto, or la case
+        /// visée (rembourrée pour la hitbox) est souvent inatteignable ("ran out of cells") -> il reste planté à 3-4 cases.
+        /// </summary>
+        public static bool ForceExit(Pawn v)
+        {
+            if (v is not VehiclePawn vp || !vp.Spawned) return false;
+            PromoteDriver(v);
+            vp.ExitMap(false, CellRect.WholeMap(vp.Map).GetClosestEdge(vp.Position));
+            return true;
+        }
+
         public static void StartDeploy(Pawn v)
         {
             if (v is not VehiclePawn vp || vp.CompVehicleTurrets == null || vp.CompVehicleTurrets.Deployed || vp.CompVehicleTurrets.Deploying) return;
@@ -641,8 +660,13 @@ namespace HardenedRaids
             harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(Prefix)));
             var exit = HarmonyLib.AccessTools.Method("Vehicles.VehiclePawn:ExitMap");
             if (exit != null) harmony.Patch(exit, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(ExitPrefix)));
+            // sortie « naturelle » (fin du Goto) : VF passe par PathingHelper.ExitMap, pas par VehiclePawn.ExitMap
+            var exit2 = HarmonyLib.AccessTools.Method("Vehicles.PathingHelper:ExitMap");
+            if (exit2 != null) harmony.Patch(exit2, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(ExitPrefix2)));
             Patch_EnemyHandbrake.Apply(harmony);
         }
+
+        public static void ExitPrefix2(VehiclePawn vehicle) => ExitPrefix(vehicle);
 
         public static void ExitPrefix(Pawn __instance)
         {

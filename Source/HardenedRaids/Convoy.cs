@@ -35,6 +35,7 @@ namespace HardenedRaids
         public int retreatStart;
         public Lord retreatLord;
         public List<Pawn> leaving = new List<Pawn>();
+        private Dictionary<Pawn, int> leaveStart = new Dictionary<Pawn, int>(); // non sauvegardé : repart à zéro au chargement
 
         public const string MemoAllUnloaded = "HRConvoyArrived";
         public const string MemoRetreat = "HRConvoyRetreat";
@@ -190,6 +191,16 @@ namespace HardenedRaids
                 VehicleCompat.Ready(v);
                 if (leaving.Contains(v))
                 {
+                    if (!leaveStart.ContainsKey(v)) leaveStart[v] = now;
+                    int lt = now - leaveStart[v];
+                    // collé au bord, ou bloqué près du bord depuis 20 s : on le fait sortir directement
+                    int ed = VehicleCompat.EdgeDistance(v);
+                    if ((ed <= 3 || (lt > 1200 && ed <= 15) || (lt > 3600 && ed <= 30)) && !VehicleCompat.IsDeployed(v) && !VehicleCompat.IsDeploying(v))
+                    {
+                        HRLog.Msg($"convoi : {v.LabelShort} sort de la carte ({ed} case(s) du bord, {lt / 60} s).");
+                        VehicleCompat.ForceExit(v);
+                        continue;
+                    }
                     if (!VehicleCompat.ExitMap(v) && now % 600 == 0) HRLog.Msg($"convoi : {v.LabelShort} ne trouve pas de sortie (peut rouler : {VehicleCompat.CanMove(v)}).");
                     continue;
                 }
