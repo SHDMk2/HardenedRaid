@@ -123,19 +123,22 @@ namespace HardenedRaids
         /// <summary>Les fantassins du raid qui partent (et les servants des tourelles) sont rappelés vers les véhicules.</summary>
         private int Collect(Map map)
         {
-            List<Pawn> vehicles = lord.ownedPawns.Where(v => v.Spawned && !leaving.Contains(v) && VehicleCompat.CanMove(v)).ToList();
+            // véhicules de la faction sortis du lord (équipage tué...) : on les récupère aussi
+            foreach (Pawn v in map.mapPawns.SpawnedPawnsInFaction(faction).Where(VehicleGate.IsVehicle).ToList())
+                if (v.GetLord() == null) lord.AddPawn(v);
+            List<Pawn> vehicles = lord.ownedPawns.Where(v => v.Spawned && !leaving.Contains(v) && !IsAbandoned(v)
+                                                             && (VehicleCompat.CanMove(v) || VehicleCompat.NeedsCrew(v))).ToList();
             if (vehicles.Count == 0) return 0;
             var take = new List<Pawn>();
             var packs = new Dictionary<Pawn, Building>();
             foreach (Pawn p in map.mapPawns.SpawnedPawnsInFaction(faction).ToList())
             {
                 if (VehicleGate.IsVehicle(p) || !p.RaceProps.Humanlike || p.Downed || p.InMentalState || p.IsPrisoner) continue;
-                if (p.carryTracker?.CarriedThing is Pawn) continue;   // les ravisseurs partent à pied avec leur prise
                 Lord l = p.GetLord();
                 if (l != null && (l == retreatLord || l.LordJob is LordJob_HRConvoy || l.LordJob is LordJob_HRBoard)) continue;
                 bool crew = l?.LordJob is LordJob_HRTurretCrew;
                 if (!(l == null || l == infantryLord || crew || ExitLike(l))) continue;
-                if (!vehicles.Any(v => v.Position.InHorDistOf(p.Position, 100f))) continue;
+                if (!vehicles.Any(v => v.Position.InHorDistOf(p.Position, 150f))) continue;
                 if (crew)
                 {
                     Building b = l.ownedBuildings.Where(x => x.Spawned).OrderBy(x => x.Position.DistanceToSquared(p.Position)).FirstOrDefault();
@@ -149,32 +152,60 @@ namespace HardenedRaids
             if (rl.LordJob is LordJob_HRBoard bj)
             {
                 foreach (var kv in packs) bj.pack[kv.Key] = kv.Value;
-                foreach (Pawn p in take) { bj.Assign(p); p.jobs?.EndCurrentJob(JobCondition.InterruptForced); }
+                foreach (Pawn p in take)
+                {
+                    Pawn v = bj.Assign(p);
+                    if (p.carryTracker?.CarriedThing != null && v != null)
+                    {
+                        // ravisseur / voleur : il garde sa prise et la charge dans le véhicule le plus proche
+                        Job j = JobMaker.MakeJob(HRDefOf.HR_BoardVehicle, v);
+                        j.locomotionUrgency = LocomotionUrgency.Sprint;
+                        p.jobs.StartJob(j, JobCondition.InterruptForced, keepCarryingThingOverride: true);
+                    }
+                    else p.jobs?.EndCurrentJob(JobCondition.InterruptForced);
+                }
             }
             return take.Count;
         }
 
         /// <summary>
-        /// Retraite : les camions attendent leurs passagers puis partent ; les blindés tiennent la position (tir auto)
-        /// jusqu'au départ du dernier camion, puis partent à leur tour. Un véhicule immobilisé est abandonné.
+        /// Retraite :
+        ///  - transports : partent dès que plus personne n'est en route vers eux (ou pleins), sans attendre les autres ;
+        ///  - tir indirect (lance-roquettes, artillerie) : part tout de suite, ne couvre pas ;
+        ///  - blindés : tiennent une position de couverture à 15 cases au moins du bord (sans boucher les sorties),
+        ///    puis partent quand il ne reste plus de transport ni personne à embarquer ;
+        ///  - véhicule sans pilote : attend celui qui vient le prendre ; immobilisé (dégâts, carburant) : abandonné.
         /// </summary>
         public void TickRetreat(Map map, int now)
         {
             int el = now - retreatStart;
             if (el % 300 < 60 && el < 4800) Collect(map);
             var bj = retreatLord?.LordJob as LordJob_HRBoard;
-            bool trucksGone = lord.ownedPawns.All(v => !v.Spawned || leaving.Contains(v) || VehicleCompat.HasTurrets(v) || !VehicleCompat.CanMove(v));
+            foreach (Pawn v in lord.ownedPawns) if (v.Spawned) VehicleCompat.PromoteDriver(v);
+            bool transportsLeft = lord.ownedPawns.Any(v => v.Spawned && !leaving.Contains(v) && !IsAbandoned(v) && !VehicleCompat.HasTurrets(v)
+                                                          && (VehicleCompat.CanMove(v) || (bj?.PendingDrivers(v) ?? 0) > 0));
             foreach (Pawn v in lord.ownedPawns.ToList())
             {
-                if (!v.Spawned) continue;
+                if (!v.Spawned || IsAbandoned(v)) continue;
                 VehicleCompat.Ready(v);
-                if (leaving.Contains(v)) { VehicleCompat.ExitMap(v); continue; }
-                if (!VehicleCompat.CanMove(v) && !VehicleCompat.IsDeployed(v) && !VehicleCompat.IsDeploying(v)) { Abandon(v, map); continue; }
+                if (leaving.Contains(v))
+                {
+                    if (!VehicleCompat.ExitMap(v) && now % 600 == 0) HRLog.Msg($"convoi : {v.LabelShort} ne trouve pas de sortie (peut rouler : {VehicleCompat.CanMove(v)}).");
+                    continue;
+                }
                 int pending = bj?.Pending(v) ?? 0;
+                bool deployed = VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v);
+                if (!VehicleCompat.CanMove(v) && !deployed)
+                {
+                    // sans pilote : on attend celui qui arrive ; personne après 20 s -> laissé sur place
+                    if (!VehicleCompat.NeedsCrew(v) || ((bj?.PendingDrivers(v) ?? 0) == 0 && el > 1200)) Abandon(v, map);
+                    continue;
+                }
                 bool full = VehicleCompat.FreeSeats(v) == 0;
-                bool truck = !VehicleCompat.HasTurrets(v);
-                bool go = truck ? (el >= 600 && (pending == 0 || full)) || el > 6000
-                                : (el >= 900 && trucksGone && pending == 0) || el > 7500;
+                bool go;
+                if (!VehicleCompat.HasTurrets(v)) go = el >= 60 && (pending == 0 || full) || el > 6000;
+                else if (IsIndirect(v)) go = pending == 0 || full || el > 1800;
+                else go = (el >= 300 && !transportsLeft && pending == 0) || el > 7500;
                 if (go)
                 {
                     if (VehicleCompat.ExitMap(v))
@@ -182,12 +213,41 @@ namespace HardenedRaids
                         leaving.Add(v);
                         HRLog.Msg($"convoi : {v.LabelShort} quitte la carte avec {VehicleCompat.PawnsAboard(v).Count()} homme(s) à bord.");
                     }
+                    continue;
                 }
-                else TickFireSupport(v, now);
+                if (VehicleCompat.HasTurrets(v) && !IsIndirect(v))
+                {
+                    IntVec3 cover = CoverCell(v, map);
+                    if (!holding.Contains(v) && !deployed && (v.mindState.duty?.focus.Cell ?? IntVec3.Invalid) != cover)
+                        v.mindState.duty = VehicleCompat.TravelDuty(cover);
+                    TickFireSupport(v, now);
+                }
             }
         }
 
         private readonly HashSet<Pawn> abandoned = new HashSet<Pawn>();
+        private readonly Dictionary<Pawn, IntVec3> coverCells = new Dictionary<Pawn, IntVec3>();
+
+        public bool IsAbandoned(Pawn v) => abandoned.Contains(v);
+
+        private static bool IsIndirect(Pawn v) => VehicleCompat.IsFireSupport(v) || VehicleCompat.HasIndirectTurret(v);
+
+        /// <summary>Position de couverture : là où il est, ou ramené à 15 cases au moins du bord de la carte.</summary>
+        private IntVec3 CoverCell(Pawn v, Map map)
+        {
+            if (coverCells.TryGetValue(v, out IntVec3 c)) return c;
+            IntVec3 pos = v.Position;
+            c = pos;
+            int edge = Mathf.Min(Mathf.Min(pos.x, pos.z), Mathf.Min(map.Size.x - 1 - pos.x, map.Size.z - 1 - pos.z));
+            if (edge < 15)
+            {
+                var want = new IntVec3(Mathf.Clamp(pos.x, 15, map.Size.x - 16), 0, Mathf.Clamp(pos.z, 15, map.Size.z - 16));
+                var taken = new HashSet<IntVec3>(coverCells.Values);
+                c = VehicleCompat.FindStandCell(v, map, want, target.IsValid ? target : map.Center, taken) ?? want;
+            }
+            coverCells[v] = c;
+            return c;
+        }
 
         private void Abandon(Pawn v, Map map)
         {
@@ -200,8 +260,9 @@ namespace HardenedRaids
                     p.GetLord()?.Notify_PawnLost(p, PawnLostCondition.ForcedToJoinOtherLord);
                     RetreatLord(map, new List<Pawn> { p });
                 }
+                if (p.Spawned && retreatLord?.LordJob is LordJob_HRBoard bj) bj.Assign(p);
             }
-            HRLog.Msg($"convoi : {v.LabelShort} immobilisé, abandonné.");
+            HRLog.Msg($"convoi : {v.LabelShort} {(VehicleCompat.NeedsCrew(v) ? "sans pilote" : "immobilisé")}, abandonné.");
         }
 
         // ------------------------------------------------------------ débarquement d'un véhicule
@@ -284,6 +345,8 @@ namespace HardenedRaids
 
         public PawnDuty DutyFor(Pawn v)
         {
+            if (retreating && VehicleCompat.HasTurrets(v) && !IsIndirect(v) && !holding.Contains(v) && coverCells.TryGetValue(v, out IntVec3 cov))
+                return VehicleCompat.TravelDuty(cov);
             if (retreating || holding.Contains(v) || VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v))
                 return VehicleCompat.TravelDuty(v.Position);   // retraite : on tient la position / pièce en batterie
             return VehicleCompat.HasTurrets(v) && VehicleCompat.CanMove(v)
@@ -694,30 +757,67 @@ namespace HardenedRaids
 
         private LordJob_HRConvoy Convoy => convoy?.LordJob as LordJob_HRConvoy;
 
+        public HashSet<Pawn> drivers = new HashSet<Pawn>();
+        private List<Pawn> driverList;
+
+        /// <summary>Véhicule récupérable : roule, ou ne lui manque qu'un pilote.</summary>
         private bool Usable(Pawn v, LordJob_HRConvoy c) =>
-            v != null && v.Spawned && !v.Destroyed && convoy.ownedPawns.Contains(v) && !c.leaving.Contains(v) && VehicleCompat.CanMove(v);
+            v != null && v.Spawned && !v.Destroyed && convoy.ownedPawns.Contains(v) && !c.leaving.Contains(v) && !c.IsAbandoned(v)
+            && (VehicleCompat.CanMove(v) || VehicleCompat.NeedsCrew(v));
 
-        /// <summary>Passagers attendus par ce véhicule (en route, pas encore à bord).</summary>
-        public int Pending(Pawn v, Pawn except = null) =>
-            assigned.Count(kv => kv.Value == v && kv.Key != except && kv.Key.Spawned && !kv.Key.Dead && !kv.Key.Downed && kv.Key.GetLord() == lord);
+        private bool Waiting(Pawn p, Pawn except) => p != except && p.Spawned && !p.Dead && !p.Downed && p.GetLord() == lord;
 
+        /// <summary>Fantassins attendus par ce véhicule (en route, pas encore à bord).</summary>
+        public int Pending(Pawn v, Pawn except = null) => assigned.Count(kv => kv.Value == v && Waiting(kv.Key, except));
+
+        public int PendingDrivers(Pawn v, Pawn except = null) => assigned.Count(kv => kv.Value == v && drivers.Contains(kv.Key) && Waiting(kv.Key, except));
+
+        /// <summary>Valide : peut prendre le volant.</summary>
+        private static bool Fit(Pawn p) =>
+            p.health.summaryHealth.SummaryHealthPercent >= 0.8f && p.health.capacities.CapableOf(PawnCapacityDefOf.Manipulation)
+            && p.carryTracker?.CarriedThing == null;
+
+        /// <summary>
+        /// Priorité : ramener chaque véhicule. Un fantassin valide prend d'abord une place de pilote libre, sinon une
+        /// place de passager (camions d'abord). Celui qui porte quelque chose va au véhicule le plus proche.
+        /// </summary>
         public Pawn Assign(Pawn p)
         {
             LordJob_HRConvoy c = Convoy;
             if (c == null || !p.Spawned || !VehicleGate.Active) return null;
-            if (assigned.TryGetValue(p, out Pawn cur) && Usable(cur, c) && VehicleCompat.FreeSeats(cur) - Pending(cur, p) > 0) return cur;
+            if (assigned.TryGetValue(p, out Pawn cur) && Usable(cur, c))
+            {
+                bool drv = drivers.Contains(p);
+                if (drv ? VehicleCompat.DriverSeats(cur) - PendingDrivers(cur, p) > 0 : VehicleCompat.FreeSeats(cur) - Pending(cur, p) > 0) return cur;
+            }
             assigned.Remove(p);
+            drivers.Remove(p);
+            bool carrying = p.carryTracker?.CarriedThing != null;
             Pawn best = null;
             float bestScore = float.MaxValue;
+            bool bestDriver = false;
             foreach (Pawn v in convoy.ownedPawns)
             {
-                if (!Usable(v, c) || VehicleCompat.FreeSeats(v) - Pending(v) <= 0) continue;
+                if (!Usable(v, c)) continue;
                 float d = v.Position.DistanceTo(p.Position);
-                if (d > 100f) continue;
-                if (VehicleCompat.HasTurrets(v)) d += 25f;   // camions d'abord
-                if (d < bestScore && p.CanReach(v, PathEndMode.Touch, Danger.Deadly)) { best = v; bestScore = d; }
+                if (d > 150f) continue;
+                bool asDriver = Fit(p) && VehicleCompat.DriverSeats(v) - PendingDrivers(v) > 0;
+                if (!asDriver && VehicleCompat.FreeSeats(v) - Pending(v) <= 0) continue;
+                // un véhicule sans pilote qui attend : il ne roulera pas avec ce passager
+                if (!asDriver && !VehicleCompat.CanMove(v) && PendingDrivers(v) == 0) continue;
+                float score = d;
+                if (!carrying)
+                {
+                    if (asDriver) score -= 60f;                           // récupérer le véhicule d'abord
+                    else if (VehicleCompat.HasTurrets(v)) score += 25f;   // passagers : camions d'abord
+                }
+                if (score < bestScore && p.CanReach(v, PathEndMode.Touch, Danger.Deadly)) { best = v; bestScore = score; bestDriver = asDriver; }
             }
-            if (best != null) assigned[p] = best;
+            if (best != null)
+            {
+                assigned[p] = best;
+                if (bestDriver) drivers.Add(p);
+            }
             return best;
         }
 
@@ -758,6 +858,9 @@ namespace HardenedRaids
             Scribe_References.Look(ref convoy, "convoy");
             Scribe_Collections.Look(ref assigned, "assigned", LookMode.Reference, LookMode.Reference, ref k1, ref v1);
             Scribe_Collections.Look(ref pack, "pack", LookMode.Reference, LookMode.Reference, ref k2, ref v2);
+            if (Scribe.mode == LoadSaveMode.Saving) driverList = drivers.ToList();
+            Scribe_Collections.Look(ref driverList, "drivers", LookMode.Reference);
+            if (Scribe.mode == LoadSaveMode.PostLoadInit) drivers = new HashSet<Pawn>((driverList ?? new List<Pawn>()).Where(x => x != null));
             assigned ??= new Dictionary<Pawn, Pawn>();
             pack ??= new Dictionary<Pawn, Building>();
             packStart ??= new Dictionary<Pawn, int>();
@@ -817,7 +920,10 @@ namespace HardenedRaids
             Toil board = ToilMaker.MakeToil("HRBoard");
             board.initAction = () =>
             {
-                if (job.targetA.Thing is not Pawn v || !VehicleCompat.TryBoard(v, pawn)) EndJobWith(JobCondition.Incompletable);
+                if (job.targetA.Thing is not Pawn v) { EndJobWith(JobCondition.Incompletable); return; }
+                VehicleCompat.StowCarried(v, pawn);
+                bool driver = pawn.GetLord()?.LordJob is LordJob_HRBoard b && b.drivers.Contains(pawn);
+                if (!VehicleCompat.TryBoard(v, pawn, driver)) EndJobWith(JobCondition.Incompletable);
             };
             board.defaultCompleteMode = ToilCompleteMode.Instant;
             yield return board;

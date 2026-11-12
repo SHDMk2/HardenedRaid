@@ -6,6 +6,8 @@
     <driverClass>HardenedRaids.JobDriver_HRBoard</driverClass>
     <reportString>embarque dans TargetA.</reportString>
     <casualInterruptible>false</casualInterruptible>
+    <dropThingBeforeJob>false</dropThingBeforeJob>
+    <carryThingAfterJob>true</carryThingAfterJob>
   </JobDef>
 
   <DutyDef>

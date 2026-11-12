@@ -89,6 +89,10 @@ namespace HardenedRaids
         public static bool IsFireSupport(Pawn v) =>
             v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Turrets.Any(Manual);
 
+        /// <summary>Tourelle à tir courbe (artillerie, roquettes en cloche).</summary>
+        public static bool HasIndirectTurret(Pawn v) =>
+            v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Turrets.Any(t => t.ProjectileDef?.projectile?.flyOverhead ?? false);
+
         public static bool IsDeployed(Pawn v) => v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Deployed;
         public static bool IsDeploying(Pawn v) => v is VehiclePawn vp && vp.CompVehicleTurrets != null && vp.CompVehicleTurrets.Deploying;
 
@@ -169,7 +173,72 @@ namespace HardenedRaids
         public static int FreeSeats(Pawn v) =>
             v is VehiclePawn vp && vp.handlers != null ? vp.handlers.Sum(h => Mathf.Max(0, h.role.Slots - h.thingOwner.Count)) : 0;
 
-        public static bool TryBoard(Pawn v, Pawn p) => v is VehiclePawn vp && vp.Spawned && vp.TryAddPawn(p);
+        private static bool Moves(VehicleRoleHandler h) => (h.role.HandlingTypes & HandlingType.Movement) != 0;
+
+        /// <summary>Places de pilote libres (véhicule qui ne peut pas rouler faute de conducteur).</summary>
+        public static int DriverSeats(Pawn v) =>
+            v is VehiclePawn vp && vp.handlers != null ? vp.handlers.Where(Moves).Sum(h => Mathf.Max(0, h.role.SlotsToOperate - h.thingOwner.Count)) : 0;
+
+        public static bool NeedsCrew(Pawn v) => DriverSeats(v) > 0;
+
+        /// <summary>Monte à bord : poste de pilote d'abord si demandé, puis tireur manquant, puis passager.</summary>
+        public static bool TryBoard(Pawn v, Pawn p, bool driver)
+        {
+            if (v is not VehiclePawn vp || !vp.Spawned || vp.handlers == null) return false;
+            if (driver)
+                foreach (VehicleRoleHandler h in vp.handlers.Where(h => Moves(h) && h.AreSlotsAvailable && h.CanOperateRole(p)).ToList())
+                    if (vp.TryAddPawn(p, h)) return true;
+            foreach (VehicleRoleHandler h in vp.handlers.Where(h => h.role.HandlingTypes != HandlingType.None && h.thingOwner.Count < h.role.SlotsToOperate && h.CanOperateRole(p)).ToList())
+                if (vp.TryAddPawn(p, h)) return true;
+            foreach (VehicleRoleHandler h in vp.handlers.Where(h => h.role.HandlingTypes == HandlingType.None && h.AreSlotsAvailable).ToList())
+                if (vp.TryAddPawn(p, h)) return true;
+            return vp.TryAddPawn(p);
+        }
+
+        /// <summary>Un passager valide prend le volant d'un véhicule sans pilote (sans descendre).</summary>
+        public static bool PromoteDriver(Pawn v)
+        {
+            if (v is not VehiclePawn vp || vp.handlers == null || !NeedsCrew(v)) return false;
+            bool done = false;
+            foreach (VehicleRoleHandler seat in vp.handlers.Where(Moves).ToList())
+            {
+                while (seat.thingOwner.Count < seat.role.SlotsToOperate)
+                {
+                    Pawn cand = vp.handlers.Where(h => !Moves(h)).SelectMany(h => h.thingOwner.InnerListForReading)
+                        .FirstOrDefault(x => !x.Downed && x.Faction == vp.Faction && seat.CanOperateRole(x));
+                    if (cand == null || !cand.holdingOwner.TryTransferToContainer(cand, seat.thingOwner, true)) break;
+                    done = true;
+                }
+            }
+            return done;
+        }
+
+        /// <summary>Ce que porte le fantassin (prisonnier, butin) passe dans la soute du véhicule.</summary>
+        public static void StowCarried(Pawn v, Pawn p)
+        {
+            Thing c = p.carryTracker?.CarriedThing;
+            if (c == null || v is not VehiclePawn vp || !vp.Spawned) return;
+            vp.AddOrTransfer(c);
+        }
+
+        /// <summary>
+        /// Véhicule ennemi qui sort de la carte : VF emporte ses passagers tels quels. Un colon (ou tout pawn d'une
+        /// autre faction) à bord est enlevé comme par un ravisseur à pied.
+        /// </summary>
+        public static void KidnapAboard(Pawn vehicle)
+        {
+            if (vehicle is not VehiclePawn vp || vp.Faction == null || vp.Faction.IsPlayer) return;
+            var victims = new List<Pawn>();
+            foreach (Thing t in vp.inventory.innerContainer) if (t is Pawn x) victims.Add(x);
+            if (vp.handlers != null) foreach (VehicleRoleHandler h in vp.handlers) victims.AddRange(h.thingOwner.InnerListForReading);
+            foreach (Pawn x in victims.Distinct().ToList())
+            {
+                if (x.Faction == null || x.Faction == vp.Faction || !x.RaceProps.Humanlike || x.Dead) continue;
+                x.holdingOwner?.Remove(x);
+                vp.Faction.kidnapped.Kidnap(x, vp);
+                HRLog.Msg($"{vp.LabelShort} emporte {x.LabelShort}.");
+            }
+        }
 
         public static bool IsExiting(Pawn v) => v.CurJob != null && v.CurJob.exitMapOnArrival;
 
@@ -180,6 +249,7 @@ namespace HardenedRaids
             if (IsExiting(v)) return true;
             if (IsDeployed(v)) { Undeploy(v); return false; }
             if (IsDeploying(v)) return false;
+            PromoteDriver(v);
             Ready(v);
             if (!vp.CanMoveFinal) return false;
             Verse.AI.Job j = exitGiver.TryIssueJobPackage(vp, default(Verse.AI.JobIssueParams)).Job;
@@ -569,6 +639,49 @@ namespace HardenedRaids
             var m = HarmonyLib.AccessTools.Method("Vehicles.Ext_Vehicles:SpawnPawnNearVehicle");
             if (m == null) { Log.Warning("[Hardened Raids] Ext_Vehicles.SpawnPawnNearVehicle introuvable : le débarquement utilisera le lord de VF."); return; }
             harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(Prefix)));
+            var exit = HarmonyLib.AccessTools.Method("Vehicles.VehiclePawn:ExitMap");
+            if (exit != null) harmony.Patch(exit, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(ExitPrefix)));
+            Patch_EnemyHandbrake.Apply(harmony);
+        }
+
+        public static void ExitPrefix(Pawn __instance)
+        {
+            try { VehicleCompat.KidnapAboard(__instance); }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] sortie de véhicule : " + e.Message, 0x4B49444E); }
+        }
+    }
+
+    /// <summary>
+    /// Vanilla Vehicles Expanded : coup de frein à main quand un véhicule n'a pas la place de décélérer (message,
+    /// crissement, pneus abîmés). Désactivé pour les véhicules non joueurs : l'IA s'arrête sans cesse.
+    /// </summary>
+    public static class Patch_EnemyHandbrake
+    {
+        private static System.Reflection.FieldInfo handbrake;
+
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method("VanillaVehiclesExpanded.CompVehicleMovementController:Slowdown");
+            if (m == null) return;
+            handbrake = HarmonyLib.AccessTools.Field(m.DeclaringType, "handbrakeApplied");
+            if (handbrake == null) return;
+            harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyHandbrake), nameof(Prefix)),
+                postfix: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyHandbrake), nameof(Postfix)));
+        }
+
+        public static void Prefix(object __instance, out bool __state)
+        {
+            __state = false;
+            if (__instance is ThingComp c && c.parent?.Faction != null && !c.parent.Faction.IsPlayer && !(bool)handbrake.GetValue(__instance))
+            {
+                handbrake.SetValue(__instance, true);   // la branche "frein à main" est sautée
+                __state = true;
+            }
+        }
+
+        public static void Postfix(object __instance, bool __state)
+        {
+            if (__state) handbrake.SetValue(__instance, false);
         }
     }
 }
