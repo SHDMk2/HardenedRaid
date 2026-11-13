@@ -7,7 +7,7 @@ namespace HardenedRaids
     public class TierDef
     {
         public string label;
-        public float costMult;          // prix d'un raider de ce palier / prix d'un raider vanilla
+        public float bodyMult;          // prix du « corps » (skills, santé) / prix de base ; l'équipement est payé à part, à sa valeur
         public bool healthy;            // retire vieilles blessures, maladies chroniques, addictions
         public FloatRange ageRange;     // âge biologique
         public IntRange combatSkill;    // niveau du skill de combat principal
@@ -16,8 +16,6 @@ namespace HardenedRaids
         public IntRange implantCount;
         public float implantBudget;     // valeur max d'un implant
         public int cyberbrainRank;      // 0 = aucun, 1 = bas de gamme, 2 = milieu, 3 = meilleur (GiTS)
-        public QualityCategory quality;
-        public float legendaryChance;   // chance qu'une pièce passe d'un cran de qualité au-dessus
         public float heavyShare;        // part de mitrailleurs (LMG/minigun)
         public float sniperShare;
         public float breacherShare;     // armes "destructrices" (roquettes, grenades, hache de brèche)
@@ -29,40 +27,37 @@ namespace HardenedRaids
         // Échelle industrielle et au-delà (pirates, Empire, outlanders...)
         public static readonly TierDef[] Industrial =
         {
-            new TierDef { label = "T0 Vanilla", costMult = 1.00f },
-            new TierDef { label = "T1 Sain", costMult = 1.20f, healthy = true, ageRange = new FloatRange(20, 45), combatSkill = new IntRange(6, 8),
-                apparelBudget = 350, weaponBudget = 350, implantCount = new IntRange(0, 0), quality = QualityCategory.Normal },
-            new TierDef { label = "T2 Milice", costMult = 1.55f, healthy = true, ageRange = new FloatRange(20, 45), combatSkill = new IntRange(8, 10),
-                apparelBudget = 800, weaponBudget = 600, implantCount = new IntRange(0, 1), implantBudget = 700, quality = QualityCategory.Normal,
+            new TierDef { label = "T0 Vanilla", bodyMult = 1.00f },
+            new TierDef { label = "T1 Sain", bodyMult = 1.00f, healthy = true, ageRange = new FloatRange(20, 45), combatSkill = new IntRange(6, 8),
+                apparelBudget = 350, weaponBudget = 350, implantCount = new IntRange(0, 0) },
+            new TierDef { label = "T2 Milice", bodyMult = 1.10f, healthy = true, ageRange = new FloatRange(20, 45), combatSkill = new IntRange(8, 10),
+                apparelBudget = 800, weaponBudget = 600, implantCount = new IntRange(0, 1), implantBudget = 700,
                 breacherShare = 0.08f },
-            new TierDef { label = "T3 Soldat", costMult = 2.10f, healthy = true, ageRange = new FloatRange(20, 42), combatSkill = new IntRange(10, 12),
-                apparelBudget = 1500, weaponBudget = 1000, implantCount = new IntRange(1, 2), implantBudget = 1400, quality = QualityCategory.Good,
+            new TierDef { label = "T3 Soldat", bodyMult = 1.20f, healthy = true, ageRange = new FloatRange(20, 42), combatSkill = new IntRange(10, 12),
+                apparelBudget = 1500, weaponBudget = 1000, implantCount = new IntRange(1, 2), implantBudget = 1400,
                 heavyShare = 0.10f, breacherShare = 0.08f },
-            new TierDef { label = "T4 Vétéran", costMult = 2.90f, healthy = true, ageRange = new FloatRange(22, 40), combatSkill = new IntRange(12, 14),
-                apparelBudget = 3000, weaponBudget = 1800, implantCount = new IntRange(2, 4), implantBudget = 2200, cyberbrainRank = 1,
-                quality = QualityCategory.Good, legendaryChance = 0.3f, heavyShare = 0.10f, sniperShare = 0.08f, breacherShare = 0.07f },
-            new TierDef { label = "T5 Élite", costMult = 4.00f, healthy = true, ageRange = new FloatRange(22, 40), combatSkill = new IntRange(14, 16),
-                apparelBudget = 6000, weaponBudget = 3500, implantCount = new IntRange(4, 6), implantBudget = 4000, cyberbrainRank = 2,
-                quality = QualityCategory.Excellent, legendaryChance = 0.2f, heavyShare = 0.10f, sniperShare = 0.08f, breacherShare = 0.08f },
-            new TierDef { label = "T6 Légende", costMult = 5.00f, healthy = true, ageRange = new FloatRange(22, 40), combatSkill = new IntRange(18, 20),
-                apparelBudget = 1e9f, weaponBudget = 1e9f, implantCount = new IntRange(6, 8), implantBudget = 1e9f, cyberbrainRank = 3,
-                quality = QualityCategory.Masterwork, legendaryChance = 0.25f, heavyShare = 0.10f, sniperShare = 0.08f, breacherShare = 0.08f },
+            new TierDef { label = "T4 Vétéran", bodyMult = 1.35f, healthy = true, ageRange = new FloatRange(22, 40), combatSkill = new IntRange(12, 14),
+                apparelBudget = 3000, weaponBudget = 1800, implantCount = new IntRange(2, 4), implantBudget = 2200, cyberbrainRank = 1, heavyShare = 0.10f, sniperShare = 0.08f, breacherShare = 0.07f },
+            new TierDef { label = "T5 Élite", bodyMult = 1.50f, healthy = true, ageRange = new FloatRange(22, 40), combatSkill = new IntRange(14, 16),
+                apparelBudget = 6000, weaponBudget = 3500, implantCount = new IntRange(4, 6), implantBudget = 4000, cyberbrainRank = 2, heavyShare = 0.10f, sniperShare = 0.08f, breacherShare = 0.08f },
+            new TierDef { label = "T6 Légende", bodyMult = 1.70f, healthy = true, ageRange = new FloatRange(22, 40), combatSkill = new IntRange(18, 20),
+                apparelBudget = 1e9f, weaponBudget = 1e9f, implantCount = new IntRange(6, 8), implantBudget = 1e9f, cyberbrainRank = 3, heavyShare = 0.10f, sniperShare = 0.08f, breacherShare = 0.08f },
         };
 
         // Échelle néolithique / médiévale : pas d'implants, c'est le nombre et la qualité qui comptent
         public static readonly TierDef[] Neolithic =
         {
-            new TierDef { label = "N0 Vanilla", costMult = 1.00f },
-            new TierDef { label = "N1 Sain", costMult = 1.15f, healthy = true, ageRange = new FloatRange(16, 40), combatSkill = new IntRange(6, 8),
-                apparelBudget = 200, weaponBudget = 200, quality = QualityCategory.Normal, meleeShare = 0.35f },
-            new TierDef { label = "N2 Guerrier", costMult = 1.35f, healthy = true, ageRange = new FloatRange(16, 40), combatSkill = new IntRange(8, 10),
-                apparelBudget = 400, weaponBudget = 300, quality = QualityCategory.Normal, meleeShare = 0.35f, breacherShare = 0.05f },
-            new TierDef { label = "N3 Chasseur", costMult = 1.60f, healthy = true, ageRange = new FloatRange(18, 38), combatSkill = new IntRange(10, 12),
-                apparelBudget = 800, weaponBudget = 550, quality = QualityCategory.Good, meleeShare = 0.35f, breacherShare = 0.06f },
-            new TierDef { label = "N4 Horde d'élite", costMult = 1.90f, healthy = true, ageRange = new FloatRange(18, 38), combatSkill = new IntRange(13, 15),
-                apparelBudget = 1600, weaponBudget = 1000, quality = QualityCategory.Excellent, legendaryChance = 0.15f, meleeShare = 0.35f, breacherShare = 0.06f },
-            new TierDef { label = "N5 Légende", costMult = 2.40f, healthy = true, ageRange = new FloatRange(18, 38), combatSkill = new IntRange(18, 20),
-                apparelBudget = 1e9f, weaponBudget = 1e9f, quality = QualityCategory.Masterwork, legendaryChance = 0.25f, meleeShare = 0.35f, breacherShare = 0.06f },
+            new TierDef { label = "N0 Vanilla", bodyMult = 1.00f },
+            new TierDef { label = "N1 Sain", bodyMult = 1.00f, healthy = true, ageRange = new FloatRange(16, 40), combatSkill = new IntRange(6, 8),
+                apparelBudget = 200, weaponBudget = 200, meleeShare = 0.35f },
+            new TierDef { label = "N2 Guerrier", bodyMult = 1.10f, healthy = true, ageRange = new FloatRange(16, 40), combatSkill = new IntRange(8, 10),
+                apparelBudget = 400, weaponBudget = 300, meleeShare = 0.35f, breacherShare = 0.05f },
+            new TierDef { label = "N3 Chasseur", bodyMult = 1.20f, healthy = true, ageRange = new FloatRange(18, 38), combatSkill = new IntRange(10, 12),
+                apparelBudget = 800, weaponBudget = 550, meleeShare = 0.35f, breacherShare = 0.06f },
+            new TierDef { label = "N4 Horde d'élite", bodyMult = 1.35f, healthy = true, ageRange = new FloatRange(18, 38), combatSkill = new IntRange(13, 15),
+                apparelBudget = 1600, weaponBudget = 1000, meleeShare = 0.35f, breacherShare = 0.06f },
+            new TierDef { label = "N5 Légende", bodyMult = 1.60f, healthy = true, ageRange = new FloatRange(18, 38), combatSkill = new IntRange(18, 20),
+                apparelBudget = 1e9f, weaponBudget = 1e9f, meleeShare = 0.35f, breacherShare = 0.06f },
         };
 
         // Points (déjà ajustés par la stratégie) -> palier "continu". < 1 => vanilla.
@@ -85,8 +80,9 @@ namespace HardenedRaids
             new CurvePoint(25000f, 5f),
         };
 
-        public const float IndustrialBaseCost = 85f;
-        public const float NeolithicBaseCost = 55f;
+        // Prix du corps, calé sur vanilla : combatPower ≈ 48 + valeur de l'équipement / 40 (pirates, mercenaires, outlanders)
+        public const float IndustrialBaseCost = 45f;
+        public const float NeolithicBaseCost = 38f;
 
         public static bool IsLowTech(FactionDef f) => f.techLevel <= TechLevel.Medieval;
 

@@ -14,6 +14,10 @@ namespace HardenedRaids
         public static float CostFactor = 1f;            // multiplie le coût de chaque palier (>1 = moins de raiders, <1 = plus)
         public static float TierSpeed = 1f;             // >1 = on atteint les hauts paliers avec moins de points
         public static bool AddCyberbrains = true;       // GiTS Cyberbrains (si présent)
+        public static float ValueDivisor = 40f;         // $ d'équipement par point (calé sur vanilla)
+        public static bool ArmorGate = true;            // armures et mécanoïdes blindés limités par les points et la recherche de la colonie
+        public static float HarshDeathShare = 0.30f;    // part des raiders industriels+ biocodés avec acidificateur
+        public static float HeavyMechCostFactor = 2f;   // prix des mécanoïdes blindés (≥ 75 % de l'armure de marine)
 
         // --- Vagues ---
         public static int CapHighTech = 100;
@@ -51,6 +55,10 @@ namespace HardenedRaids
             Scribe_Values.Look(ref CostFactor, "CostFactor", 1f);
             Scribe_Values.Look(ref TierSpeed, "TierSpeed", 1f);
             Scribe_Values.Look(ref AddCyberbrains, "AddCyberbrains", true);
+            Scribe_Values.Look(ref ValueDivisor, "ValueDivisor", 40f);
+            Scribe_Values.Look(ref ArmorGate, "ArmorGate", true);
+            Scribe_Values.Look(ref HarshDeathShare, "HarshDeathShare", 0.30f);
+            Scribe_Values.Look(ref HeavyMechCostFactor, "HeavyMechCostFactor", 2f);
             Scribe_Values.Look(ref CapHighTech, "CapHighTech", 100);
             Scribe_Values.Look(ref CapLowTech, "CapLowTech", 300);
             Scribe_Values.Look(ref WaveDelayHoursMin, "WaveDelayHoursMin", 2f);
@@ -93,12 +101,20 @@ namespace HardenedRaids
             l.Label("<b>Génération par paliers</b>");
             l.CheckboxLabeled("Activer les paliers d'équipement", ref EnableTiers);
             CostFactor = l.SliderLabeled($"Coût des raiders équipés : ×{CostFactor:F2}", CostFactor, 0.5f, 2f, 0.5f,
-                "Prix en points de l'équipement. Plus haut = moins de raiders mais aussi bien équipés.");
+                "Multiplie le prix de chaque raider. Plus haut = moins de raiders mais aussi bien équipés.");
             CostFactor = Mathf.Round(CostFactor * 20f) / 20f;
             TierSpeed = l.SliderLabeled($"Vitesse de montée en palier : ×{TierSpeed:F2}", TierSpeed, 0.5f, 3f, 0.5f,
                 "Plus haut = les raiders atteignent les paliers élevés avec moins de points.");
             TierSpeed = Mathf.Round(TierSpeed * 20f) / 20f;
             l.CheckboxLabeled("Cyberbrains GiTS pour les vétérans (si le mod est actif)", ref AddCyberbrains);
+            ValueDivisor = Mathf.Round(l.SliderLabeled($"Équipement : {ValueDivisor:F0} $ par point", ValueDivisor, 15f, 100f, 0.5f,
+                "Prix d'un raider = corps + valeur de son équipement (qualité, implants, cyberbrain compris) ÷ ce taux. 40 ≈ vanilla. Plus bas = équipement plus cher = moins de raiders."));
+            l.CheckboxLabeled("Limiter les armures solides selon les points et la recherche de la colonie", ref ArmorGate,
+                "Armures et mécanoïdes blindés plafonnés par les points du raid (marine vers 6 000 pts), et pas d'armure spacer tant que la colonie n'a fini aucune recherche spacer.");
+            HarshDeathShare = Mathf.Round(l.SliderLabeled($"Raiders biocodés + acidificateur : {HarshDeathShare:P0}", HarshDeathShare, 0f, 1f, 0.5f,
+                "Industriel et au-delà. Arme biocodée et acidificateur (l'équipement fond à la mort). Sans effet sur le prix.") * 20f) / 20f;
+            HeavyMechCostFactor = Mathf.Round(l.SliderLabeled($"Prix des mécanoïdes blindés : ×{HeavyMechCostFactor:F2}", HeavyMechCostFactor, 1f, 4f, 0.5f,
+                "Centipède, Termite, Diabolus, Warqueen… (protection ≥ 75 % de l'armure de marine).") * 4f) / 4f;
             l.GapLine();
 
             l.Label("<b>Vagues</b>");

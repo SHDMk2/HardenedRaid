@@ -21,6 +21,7 @@ autre emplacement : `dotnet build -c Release -p:VFDir=/chemin/vers/Assemblies`.
 |---|---|
 | `PointsPatches.cs` | plafond de 10 000 (transpiler) + courbes richesse prolongées au-delà de 1M |
 | `Tiers.cs` | paliers T0-T6 (industriel+) et N0-N5 (néolithique/médiéval), courbes points → palier |
+| `Pricing.cs` | grades (1 sous-officier / 10, 1 officier / 100), qualité gaussienne tronquée par grade, prix = corps + valeur de l'équipement ÷ taux, blocage des armures / mécanoïdes blindés, prix des mécanoïdes blindés |
 | `RaidPlanner.cs` | modèle C (noyau + troupe), choix des pawnkinds, rôles, génération |
 | `Loadouts.cs` | tables d'objets par faction, dotation uniforme (armure, armes par rôle, implants, GiTS) |
 | `PawnTuning.cs` | santé, implants, skills, port de l'équipement, marqueur de palier |

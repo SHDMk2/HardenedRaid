@@ -41,20 +41,43 @@ namespace HardenedRaids
         public static void InstallImplants(Pawn pawn, Slot s)
         {
             if (installPart == null) return;
-            var parts = Loadouts.PickImplants(s.faction.def, s.tier, s.rng);
-            ThingDef brain = Loadouts.PickCyberbrain(s.tier.cyberbrainRank);
-            if (brain != null && !Tiers.IsLowTech(s.faction.def)) parts.Add(brain);
-            foreach (ThingDef d in parts)
+            // implants et cyberbrain tirés à la planification (ils entrent dans le prix du raider)
+            var parts = new List<ThingDef>(s.implants ?? new List<ThingDef>());
+            if (s.brain != null) parts.Add(s.brain);
+            foreach (ThingDef d in parts) InstallPart(pawn, d);
+        }
+
+        private static void InstallPart(Pawn pawn, ThingDef d)
+        {
+            if (installPart == null) return;
+            try
             {
-                try
-                {
-                    installPart.Invoke(null, new object[] { pawn, d });
-                }
-                catch (Exception e)
-                {
-                    HRLog.Msg($"implant {d.defName} impossible sur {pawn} : {e.InnerException?.Message ?? e.Message}");
-                }
+                installPart.Invoke(null, new object[] { pawn, d });
             }
+            catch (Exception e)
+            {
+                HRLog.Msg($"implant {d.defName} impossible sur {pawn} : {e.InnerException?.Message ?? e.Message}");
+            }
+        }
+
+        // ------------------------------------------------------------ biocodage + acidificateur (sans effet sur le prix)
+        private static ThingDef deathAcidifier;
+        private static bool deathAcidifierLooked;
+
+        public static void ApplyHarshDeath(Pawn pawn, Slot s)
+        {
+            if (HRSettings.HarshDeathShare <= 0f || s.faction.def.techLevel < TechLevel.Industrial) return;
+            if (s.rng.NextDouble() >= HRSettings.HarshDeathShare) return;
+            ThingWithComps gun = pawn.equipment?.Primary;
+            CompBiocodable code = gun?.TryGetComp<CompBiocodable>();
+            if (code != null && !code.Biocoded) code.CodeFor(pawn);
+            if (!deathAcidifierLooked)
+            {
+                deathAcidifier = DefDatabase<ThingDef>.GetNamedSilentFail("DeathAcidifier");
+                deathAcidifierLooked = true;
+            }
+            HediffDef h = DefDatabase<HediffDef>.GetNamedSilentFail("DeathAcidifier");
+            if (deathAcidifier != null && (h == null || !pawn.health.hediffSet.HasHediff(h))) InstallPart(pawn, deathAcidifier);
         }
 
         // ------------------------------------------------------------ skills
@@ -93,9 +116,7 @@ namespace HardenedRaids
         // ------------------------------------------------------------ équipement
         public static QualityCategory RollQuality(Slot s)
         {
-            QualityCategory q = s.tier.quality;
-            if (s.rng.NextDouble() < s.tier.legendaryChance && q < QualityCategory.Legendary) q++;
-            return q;
+            return QualityModel.Sample(s.rank, s.tierIndex, Tiers.LadderFor(s.faction.def).Length, s.rng);
         }
 
         public static void FinishGear(Thing t, Pawn pawn, Slot s)

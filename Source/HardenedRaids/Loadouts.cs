@@ -203,11 +203,11 @@ namespace HardenedRaids
             (d.apparel.bodyPartGroups.Contains(BodyPartGroupDefOf.FullHead) || d.apparel.bodyPartGroups.Contains(BodyPartGroupDefOf.UpperHead));
 
         /// <param name="shields">false : aucun équipement bouclier ; true : autorisés s'ils ne gênent pas <paramref name="weapon"/>.</param>
-        public static List<ThingStuffPair> BuildApparelSet(FactionTables t, float budget, Random rng, bool shields = false, ThingDef weapon = null)
+        public static List<ThingStuffPair> BuildApparelSet(FactionTables t, float budget, Random rng, bool shields = false, ThingDef weapon = null, ArmorGate gate = null)
         {
             var set = new List<ThingStuffPair>();
             if (apparelPairs == null) return set;
-            List<ThingStuffPair> cands = apparelPairs.Where(p => p.Price <= budget && Intersects(p.thing.apparel.tags, t.apparelTags)
+            List<ThingStuffPair> cands = apparelPairs.Where(p => p.Price <= budget && Intersects(p.thing.apparel.tags, t.apparelTags) && (gate == null || gate.Allows(p))
                                                                  && (shields ? !BlocksWeapon(p.thing, weapon) : !IsShieldGear(p.thing))).ToList();
             if (cands.Count == 0) return set;
             float left = budget;
@@ -302,7 +302,7 @@ namespace HardenedRaids
             return best[0];
         }
 
-        public static Loadout BuildLoadout(FactionDef f, TierDef tier, bool needBreacher, Random rng)
+        public static Loadout BuildLoadout(FactionDef f, TierDef tier, bool needBreacher, Random rng, ArmorGate gate = null)
         {
             FactionTables t = TablesFor(f);
             var lo = new Loadout();
@@ -326,13 +326,13 @@ namespace HardenedRaids
             }
 
             // Armure : tireurs sans aucun bouclier ; brèche / corps à corps peuvent prendre boucliers et armures à bouclier
-            lo.apparel = BuildApparelSet(t, tier.apparelBudget, rng);
+            lo.apparel = BuildApparelSet(t, tier.apparelBudget, rng, gate: gate);
             foreach (Role r in new[] { Role.Breacher, Role.Melee })
             {
                 if (r == Role.Breacher && !lo.weapons.ContainsKey(Role.Breacher)) continue;
                 if (r == Role.Melee && tier.meleeShare <= 0f) continue;
                 ThingDef w = lo.WeaponFor(r)?.thing;
-                List<ThingStuffPair> assault = BuildApparelSet(t, tier.apparelBudget, rng, shields: true, weapon: w);
+                List<ThingStuffPair> assault = BuildApparelSet(t, tier.apparelBudget, rng, shields: true, weapon: w, gate: gate);
                 if (assault.Any(p => IsShieldGear(p.thing))) lo.roleApparel[r] = assault;
             }
             return lo;
@@ -368,13 +368,29 @@ namespace HardenedRaids
             return s;
         }
 
+        private static List<ThingDef> ImplantCandidates(FactionDef f, TierDef tier)
+        {
+            FactionTables t = TablesFor(f);
+            return implants.Where(d => d.BaseMarketValue <= tier.implantBudget && Intersects(d.techHediffsTags, t.implantTags)).ToList();
+        }
+
+        /// <summary>Valeur moyenne des implants d'un raider du palier (tirage pondéré par la valeur, sans remise : approximation).</summary>
+        public static float ExpectedImplantValue(FactionDef f, TierDef tier)
+        {
+            if (implants == null || tier.implantCount.max <= 0 || Tiers.IsLowTech(f)) return 0f;
+            List<ThingDef> cands = ImplantCandidates(f, tier);
+            if (cands.Count == 0) return 0f;
+            float sum = cands.Sum(d => d.BaseMarketValue), sq = cands.Sum(d => d.BaseMarketValue * d.BaseMarketValue);
+            float avgCount = Math.Min((tier.implantCount.min + tier.implantCount.max) / 2f, cands.Count);
+            return avgCount * (sum > 0f ? sq / sum : 0f);
+        }
+
         public static List<ThingDef> PickImplants(FactionDef f, TierDef tier, Random rng)
         {
             var res = new List<ThingDef>();
             if (implants == null || tier.implantCount.max <= 0) return res;
-            FactionTables t = TablesFor(f);
             int n = rng.Next(tier.implantCount.min, tier.implantCount.max + 1);
-            List<ThingDef> cands = implants.Where(d => d.BaseMarketValue <= tier.implantBudget && Intersects(d.techHediffsTags, t.implantTags)).ToList();
+            List<ThingDef> cands = ImplantCandidates(f, tier);
             for (int i = 0; i < n && cands.Count > 0; i++)
             {
                 // pondéré par la valeur : les meilleurs implants sortent plus souvent

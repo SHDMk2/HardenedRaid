@@ -15,6 +15,7 @@ namespace HardenedRaids
         public TierDef tier;
         public int count;
         public Loadout loadout;
+        public float price;    // prix moyen prévu d'un raider du groupe (points)
     }
 
     /// <summary>Modèle C : une troupe au palier bas + un noyau au palier haut, proportion continue.</summary>
@@ -28,6 +29,8 @@ namespace HardenedRaids
         public int thisWave;   // raiders de cette vague
         public GroupPlan core; // peut être null
         public GroupPlan troop;
+        public int ncos, officers; // grades de cette vague
+        public ArmorGate gate;
 
         public static RaidPlan Make(FactionDef f, float points, float? xOverride, int? countOverride, bool needBreacher, System.Random rng)
         {
@@ -38,10 +41,15 @@ namespace HardenedRaids
             int hi = Mathf.Min(lo + 1, ladder.Length - 1);
             float frac = lo == hi ? 0f : Mathf.Clamp01(x - lo);
 
-            float baseCost = Tiers.BaseCostFor(f) * HRSettings.CostFactor;
-            float avg = baseCost * ((1f - frac) * ladder[lo].costMult + frac * ladder[hi].costMult);
+            // dotations d'abord : le prix d'un raider dépend de ce qu'il porte
+            ArmorGate gate = ArmorGate.For(points);
+            Loadout loLoadout = Loadouts.BuildLoadout(f, ladder[lo], needBreacher, rng, gate);
+            Loadout hiLoadout = lo == hi ? loLoadout : Loadouts.BuildLoadout(f, ladder[hi], needBreacher, rng, gate);
+            float loPrice = Pricing.ExpectedPrice(f, ladder[lo], lo, loLoadout);
+            float hiPrice = lo == hi ? loPrice : Pricing.ExpectedPrice(f, ladder[hi], hi, hiLoadout);
+            float avg = Mathf.Max(1f, (1f - frac) * loPrice + frac * hiPrice);
 
-            var p = new RaidPlan { faction = f, points = points, tierX = x };
+            var p = new RaidPlan { faction = f, points = points, tierX = x, gate = gate };
             if (countOverride.HasValue)
             {
                 p.total = p.thisWave = Mathf.Max(1, countOverride.Value);
@@ -58,8 +66,10 @@ namespace HardenedRaids
 
             int k = Mathf.RoundToInt(p.thisWave * frac);
             if (k > 0)
-                p.core = new GroupPlan { name = "noyau", tierIndex = hi, tier = ladder[hi], count = k, loadout = Loadouts.BuildLoadout(f, ladder[hi], needBreacher, rng) };
-            p.troop = new GroupPlan { name = "troupe", tierIndex = lo, tier = ladder[lo], count = p.thisWave - k, loadout = Loadouts.BuildLoadout(f, ladder[lo], needBreacher, rng) };
+                p.core = new GroupPlan { name = "noyau", tierIndex = hi, tier = ladder[hi], count = k, loadout = hiLoadout, price = hiPrice };
+            p.troop = new GroupPlan { name = "troupe", tierIndex = lo, tier = ladder[lo], count = p.thisWave - k, loadout = loLoadout, price = loPrice };
+            p.ncos = Pricing.NcoCount(p.thisWave);
+            p.officers = Pricing.OfficerCount(p.thisWave);
             return p;
         }
 
@@ -68,11 +78,13 @@ namespace HardenedRaids
             var sb = new StringBuilder();
             sb.Append($"{faction.label} @ {points:F0} pts : {total} raiders (palier {tierX:F2})");
             if (waves > 1) sb.Append($" en {waves} vagues de ~{thisWave}");
+            sb.Append($", par vague : {ncos} sous-officier(s), {officers} officier(s)");
+            if (gate != null) sb.Append($", armure max {gate.cap * ArmorGate.MarineSharp:F1} (marine {ArmorGate.MarineSharp:F1}), tech colonie {gate.colonyTech}");
             sb.AppendLine();
             foreach (GroupPlan g in new[] { core, troop })
             {
                 if (g == null || g.count <= 0) continue;
-                sb.AppendLine($"   [{g.name}] {g.count}× {g.tier.label} — skill {g.tier.combatSkill.min}-{g.tier.combatSkill.max}, qualité {g.tier.quality}, implants {g.tier.implantCount.min}-{g.tier.implantCount.max}");
+                sb.AppendLine($"   [{g.name}] {g.count}× {g.tier.label} à ~{g.price:F0} pts — skill {g.tier.combatSkill.min}-{g.tier.combatSkill.max}, implants {g.tier.implantCount.min}-{g.tier.implantCount.max}");
                 sb.AppendLine($"      {g.loadout.Describe()}");
             }
             return sb.ToString().TrimEnd();
@@ -89,6 +101,9 @@ namespace HardenedRaids
         public TierDef tier;
         public Loadout loadout;
         public Role role;
+        public Rank rank;
+        public List<ThingDef> implants;
+        public ThingDef brain;
         public System.Random rng;
     }
 
@@ -190,11 +205,23 @@ namespace HardenedRaids
                 slots.Add(new Slot
                 {
                     kind = kind, xenotype = order[i].Xenotype, faction = parms.faction,
-                    tierIndex = ti, tier = ladder[ti], loadout = g.loadout, role = Role.Main, rng = rng,
+                    tierIndex = ti, tier = ladder[ti], loadout = g.loadout, role = Role.Main, rank = Rank.Soldier, rng = rng,
                 });
             }
             AssignRoles(slots.Where(s => s.loadout == plan.core?.loadout).ToList(), isRequired);
             AssignRoles(slots.Where(s => s.loadout == plan.troop.loadout).ToList(), isRequired);
+
+            // ---- grades (chef d'abord, puis noyau) : 1 officier / 100, 1 sous-officier / 10 ; implants tirés ici pour le prix
+            int nOff = Pricing.OfficerCount(slots.Count), nNco = Pricing.NcoCount(slots.Count);
+            float spent = 0f;
+            for (int i = 0; i < slots.Count; i++)
+            {
+                Slot s = slots[i];
+                s.rank = i < nOff ? Rank.Officer : i < nOff + nNco ? Rank.Nco : Rank.Soldier;
+                s.implants = Loadouts.PickImplants(parms.faction.def, s.tier, rng);
+                s.brain = Tiers.IsLowTech(parms.faction.def) ? null : Loadouts.PickCyberbrain(s.tier.cyberbrainRank);
+                spent += Pricing.SlotPrice(s);
+            }
 
             // ---- vagues suivantes
             if (plan.waves > 1 && wave == null && !RaidContext.DebugTest)
@@ -220,7 +247,7 @@ namespace HardenedRaids
 
             if (vehicles != null && vehicles.Count > 0 && outPawns.Count > 0) RaidContext.PendingVehicles = vehicles;
             HRLog.Msg((wave != null ? $"vague {wave.index}/{wave.totalWaves} — " : "") + plan.Describe() +
-                      $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}" +
+                      $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}, coût réel ≈ {spent:F0} / {infantryPoints:F0} pts" +
                       (vehicles != null && vehicles.Count > 0 ? $", véhicules : {string.Join(", ", vehicles.Select(v => v.label))}" : ""));
             return outPawns.Count > 0;
         }
@@ -283,6 +310,7 @@ namespace HardenedRaids
             {
                 PawnTuning.ApplySkills(pawn, s);
                 PawnTuning.Mark(pawn, s.tierIndex);
+                PawnTuning.ApplyHarshDeath(pawn, s);
             }
             catch (Exception e)
             {

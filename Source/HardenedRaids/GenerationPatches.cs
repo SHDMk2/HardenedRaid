@@ -62,6 +62,21 @@ namespace HardenedRaids
         }
     }
 
+    // ---------------------------------------------------------------- mécanoïdes blindés : prix ×N et blocage selon points / tech colonie
+    [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), "GeneratePawns",
+        new[] { typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(List<Pawn>), typeof(bool) })]
+    public static class Patch_GeneratePawns_Mechs
+    {
+        public static void Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker)
+        {
+            if (parms?.groupKind != PawnGroupKindDefOf.Combat || RaidContext.Parms == null) return;
+            try { MechPricing.Apply(parms, groupMaker); }
+            catch (Exception e) { MechPricing.Restore(); Log.Warning("[Hardened Raids] prix des mécanoïdes : " + e.Message); }
+        }
+
+        public static void Finalizer() => MechPricing.Restore();
+    }
+
     // ---------------------------------------------------------------- santé + implants (avant l'équipement)
     [HarmonyPatch(typeof(PawnGenerator), "GenerateInitialHediffs")]
     public static class Patch_GenerateInitialHediffs
