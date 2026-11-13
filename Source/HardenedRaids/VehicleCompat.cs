@@ -126,7 +126,9 @@ namespace HardenedRaids
                 if (td.ammunition != null)
                     foreach (ThingDef a in td.ammunition.AllowedThingDefs)
                         if (a.projectileWhenLoaded != null) projectiles.Add(a.projectileWhenLoaded);
-                if (projectiles.Any(p => (p.projectile?.explosionRadius ?? 0f) > 0.5f || (p.label ?? "").Contains("shell"))) return true;
+                // lance-flammes (dégâts Flame, rayon de flaque) : véhicule léger, pas un canon
+                if (projectiles.Any(p => p.projectile?.damageDef != DamageDefOf.Flame
+                                         && ((p.projectile?.explosionRadius ?? 0f) > 0.5f || (p.label ?? "").Contains("shell")))) return true;
             }
             return false;
         }
@@ -150,12 +152,15 @@ namespace HardenedRaids
             return cands[cands.Count - 1];
         }
 
+        /// <summary>Un tank pour ce nombre de transports (camions + IFV) du convoi.</summary>
+        public const float TransportsPerTank = 4f;
+
         /// <summary>
-        /// Choisit les blindés d'un raid (hors transports) : 1 tank pour 3 à 6 véhicules (selon son prix), 1 appui-feu
-        /// pour 3 tanks, le reste en véhicules légers. Achat dans l'ordre appui-feu → tanks → légers, chacun en gardant
+        /// Choisit les blindés d'un raid (hors transports) : 1 tank pour 4 transports du convoi, 1 appui-feu pour
+        /// 3 tanks, le reste en véhicules légers. Achat dans l'ordre appui-feu → tanks → légers, chacun en gardant
         /// de quoi payer le prix plancher des véhicules restants. Retourne les defs et le coût total.
         /// </summary>
-        public static List<ThingDef> Plan(Faction faction, float points, float tierX, System.Random rng, out float totalCost)
+        public static List<ThingDef> Plan(Faction faction, float points, float tierX, int nTransports, System.Random rng, out float totalCost)
         {
             totalCost = 0f;
             var res = new List<ThingDef>();
@@ -186,14 +191,10 @@ namespace HardenedRaids
                 return true;
             }
 
-            // nombre de tanks : l'intervalle (3 à 6 véhicules par tank) dépend du prix du tank qu'on achèterait
             int nTanks = 0, nFire = 0;
             if (tanks.Count > 0)
             {
-                float lo = tanks.Min(v => Cost(v)), hi = tanks.Max(v => Cost(v));
-                VehicleDef typical = WeightedPick(tanks, v => Mathf.Pow(Cost(v), exp), rng);
-                float interval = Mathf.Lerp(3f, 6f, hi > lo ? Mathf.InverseLerp(lo, hi, Cost(typical)) : 0f);
-                nTanks = Mathf.Min(StochasticRound(wanted / interval, rng), wanted);
+                nTanks = Mathf.Min(StochasticRound(nTransports / TransportsPerTank, rng), wanted);
                 nFire = Mathf.Min(StochasticRound(nTanks / 3f, rng), wanted - nTanks);
             }
             for (int i = 0; i < nFire && left > 0; i++) if (!Buy(fire)) break;
@@ -495,7 +496,7 @@ namespace HardenedRaids
                     foreach (VehicleTurret t in vp.CompVehicleTurrets.Turrets)
                         if (!t.AutoTarget && t.CanAutoTarget) t.AutoTarget = true;
             }
-            catch (Exception e) { Log.WarningOnce("[Hardened Raids] démarrage du véhicule : " + e.Message, vp.thingIDNumber ^ 0x5652); }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] vehicle start-up: " + e.Message, vp.thingIDNumber ^ 0x5652); }
         }
 
         public static IntVec3? FindStandCell(Pawn v, Map map, IntVec3 want, IntVec3 target, HashSet<IntVec3> taken)
@@ -622,7 +623,7 @@ namespace HardenedRaids
                 }
                 catch (Exception e)
                 {
-                    Log.Warning($"[Hardened Raids] véhicule {d.defName} : {e}");
+                    Log.Warning($"[Hardened Raids] vehicle {d.defName}: {e}");
                     if (v != null && !v.Destroyed && !vehicles.Contains(v)) v.Destroy();
                 }
             }
@@ -653,7 +654,7 @@ namespace HardenedRaids
                 }
                 catch (Exception e)
                 {
-                    Log.Warning($"[Hardened Raids] camion {truckDef.defName} : {e}");
+                    Log.Warning($"[Hardened Raids] truck {truckDef.defName}: {e}");
                     if (t != null && !t.Destroyed && !vehicles.Contains(t)) t.Destroy();
                     break;
                 }
@@ -743,7 +744,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] véhicules : " + e);
+                Log.Warning("[Hardened Raids] vehicles: " + e);
             }
         }
     }
@@ -791,7 +792,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] lord du convoi : " + e);
+                Log.Warning("[Hardened Raids] convoy lord: " + e);
             }
         }
     }
@@ -819,7 +820,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.WarningOnce("[Hardened Raids] débarquement : " + e.Message, 0x44454241);
+                Log.WarningOnce("[Hardened Raids] dismount: " + e.Message, 0x44454241);
                 return true;
             }
         }
@@ -828,7 +829,7 @@ namespace HardenedRaids
         {
             if (!VehicleGate.Active) return;
             var m = HarmonyLib.AccessTools.Method("Vehicles.Ext_Vehicles:SpawnPawnNearVehicle");
-            if (m == null) { Log.Warning("[Hardened Raids] Ext_Vehicles.SpawnPawnNearVehicle introuvable : le débarquement utilisera le lord de VF."); return; }
+            if (m == null) { Log.Warning("[Hardened Raids] Ext_Vehicles.SpawnPawnNearVehicle not found: dismounting will use the VF lord."); return; }
             harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(Prefix)));
             var exit = HarmonyLib.AccessTools.Method("Vehicles.VehiclePawn:ExitMap");
             if (exit != null) harmony.Patch(exit, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(ExitPrefix)));
@@ -836,6 +837,7 @@ namespace HardenedRaids
             var exit2 = HarmonyLib.AccessTools.Method("Vehicles.PathingHelper:ExitMap");
             if (exit2 != null) harmony.Patch(exit2, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(ExitPrefix2)));
             Patch_EnemyHandbrake.Apply(harmony);
+            Patch_TurretKeepTarget.Apply(harmony);
         }
 
         public static void ExitPrefix2(VehiclePawn vehicle) => ExitPrefix(vehicle);
@@ -843,7 +845,7 @@ namespace HardenedRaids
         public static void ExitPrefix(Pawn __instance)
         {
             try { VehicleCompat.KidnapAboard(__instance); }
-            catch (Exception e) { Log.WarningOnce("[Hardened Raids] sortie de véhicule : " + e.Message, 0x4B49444E); }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] vehicle exit: " + e.Message, 0x4B49444E); }
         }
     }
 
@@ -878,6 +880,29 @@ namespace HardenedRaids
         public static void Postfix(object __instance, bool __state)
         {
             if (__state) handbrake.SetValue(__instance, false);
+        }
+    }
+
+    /// <summary>
+    /// Une tourelle de véhicule VF garde sa cible verrouillée tant qu'elle est à portée, même devenue inoffensive
+    /// (tourelle sans courant / chargeur vide) : pour l'IA, une tourelle hors service ne remplit plus les conditions.
+    /// </summary>
+    public static class Patch_TurretKeepTarget
+    {
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method(typeof(TargetingHelper), nameof(TargetingHelper.TargetMeetsRequirements),
+                new[] { typeof(VehicleTurret), typeof(IntVec3), typeof(LocalTargetInfo), typeof(IntVec3).MakeByRefType() });
+            if (m == null) return;
+            harmony.Patch(m, postfix: new HarmonyLib.HarmonyMethod(typeof(Patch_TurretKeepTarget), nameof(Postfix)));
+        }
+
+        public static void Postfix(VehicleTurret turret, LocalTargetInfo target, ref bool __result)
+        {
+            if (!__result || !HRSettings.IgnoreDeadTurrets) return;
+            VehiclePawn v = turret?.vehicle;
+            if (v?.Faction == null || v.Faction.IsPlayer) return;
+            if (target.Thing is Building_Turret t && t.ThreatDisabled(v)) __result = false;
         }
     }
 }

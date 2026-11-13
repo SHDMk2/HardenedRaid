@@ -54,7 +54,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] camp de siège : " + e);
+                Log.Warning("[Hardened Raids] siege camp: " + e);
             }
             HRLog.Msg($"siège {faction.Name} (palier {x:F1}) vers {target} : +{extras.Count} plans ({string.Join(", ", extras.GroupBy(b => b.def.entityDefToBuild.label).Select(g => g.Count() + "× " + g.Key))})");
             foreach (Blueprint_Build b in extras) yield return b;

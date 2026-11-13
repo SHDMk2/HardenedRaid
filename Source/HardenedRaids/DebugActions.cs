@@ -30,7 +30,7 @@ namespace HardenedRaids
 
     public static class HRDebugActions
     {
-        [DebugAction("Hardened Raids", "Aperçu des plans de raid (log)", allowedGameStates = AllowedGameStates.PlayingOnMap)]
+        [DebugAction("Hardened Raids", "Preview raid plans (log)", allowedGameStates = AllowedGameStates.PlayingOnMap)]
         public static void PreviewPlans()
         {
             float now = StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap);
@@ -50,8 +50,10 @@ namespace HardenedRaids
                     sb.AppendLine(plan == null ? $"{p:F0} pts : vanilla" : plan.Describe());
                     if (plan != null && HRSettings.EnableVehicles && VehicleGate.Active && f.def.techLevel >= TechLevel.Industrial)
                     {
-                        var v = VehicleCompat.Plan(f, p, plan.tierX, rng, out float cost);
-                        v.AddRange(VehicleCompat.PlanTransports(f, p, plan.tierX, plan.thisWave - VehicleCompat.SeatsIn(v), rng, out float tCost));
+                        var v0 = VehicleCompat.Plan(f, p, plan.tierX, 0, rng, out _);
+                        var tr = VehicleCompat.PlanTransports(f, p, plan.tierX, plan.thisWave - VehicleCompat.SeatsIn(v0), rng, out float tCost);
+                        var v = VehicleCompat.Plan(f, p, plan.tierX, tr.Count, rng, out float cost);
+                        v.AddRange(tr);
                         cost += tCost;
                         if (v.Count > 0)
                             sb.AppendLine($"   [véhicules, si arrivée à pied] {string.Join(", ", v.Select(d => d.label))} ({cost:F0} pts retirés à l'infanterie)");
@@ -61,13 +63,13 @@ namespace HardenedRaids
             Log.Message(sb.ToString());
         }
 
-        [DebugAction("Hardened Raids", "Vagues en attente (log)", allowedGameStates = AllowedGameStates.Playing)]
+        [DebugAction("Hardened Raids", "Pending waves (log)", allowedGameStates = AllowedGameStates.Playing)]
         public static void ListWaves()
         {
             var comp = Current.Game.GetComponent<GameComponent_Waves>();
-            if (comp == null || comp.pending.Count == 0) { Log.Message("[Hardened Raids] aucune vague en attente."); return; }
+            if (comp == null || comp.pending.Count == 0) { Log.Message("[Hardened Raids] no pending waves."); return; }
             int now = Find.TickManager.TicksGame;
-            Log.Message("[Hardened Raids] vagues en attente :\n" + string.Join("\n", comp.pending.Select(w =>
+            Log.Message("[Hardened Raids] pending waves:\n" + string.Join("\n", comp.pending.Select(w =>
                 $"  {w.faction?.Name} vague {w.index}/{w.totalWaves} : {w.count} raiders dans {(w.fireTick - now) / (float)GenDate.TicksPerHour:F1} h")));
         }
     }

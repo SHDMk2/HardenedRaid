@@ -53,7 +53,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Error("[Hardened Raids] génération du raid échouée, retour à vanilla : " + e);
+                Log.Error("[Hardened Raids] raid generation failed, falling back to vanilla: " + e);
                 foreach (Pawn p in outPawns) if (!p.Destroyed) p.Destroy();
                 outPawns.Clear();
                 GenContext.Current = null;
@@ -71,7 +71,7 @@ namespace HardenedRaids
         {
             if (parms?.groupKind != PawnGroupKindDefOf.Combat || RaidContext.Parms == null) return;
             try { MechPricing.Apply(parms, groupMaker); }
-            catch (Exception e) { MechPricing.Restore(); Log.Warning("[Hardened Raids] prix des mécanoïdes : " + e.Message); }
+            catch (Exception e) { MechPricing.Restore(); Log.Warning("[Hardened Raids] mechanoid pricing: " + e.Message); }
         }
 
         public static void Finalizer() => MechPricing.Restore();
@@ -92,7 +92,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] santé/implants de " + pawn + " : " + e.Message);
+                Log.Warning("[Hardened Raids] health/implants of " + pawn + " : " + e.Message);
             }
         }
     }
@@ -112,7 +112,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] armure de " + pawn + " : " + e.Message);
+                Log.Warning("[Hardened Raids] armor of " + pawn + " : " + e.Message);
                 return true;
             }
         }
@@ -134,7 +134,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] arme de " + pawn + " : " + e.Message);
+                Log.Warning("[Hardened Raids] weapon of " + pawn + " : " + e.Message);
                 return true;
             }
         }
@@ -146,7 +146,7 @@ namespace HardenedRaids
             if (s == null || !s.tier.healthy) return;
             CECompat.EnsureAmmo(pawn);
             try { PawnTuning.DropBlockingApparel(pawn); }
-            catch (Exception e) { Log.Warning("[Hardened Raids] contrôle bouclier/arme de " + pawn + " : " + e.Message); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] shield/weapon check of " + pawn + " : " + e.Message); }
         }
     }
 }

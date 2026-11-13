@@ -1,36 +1,39 @@
 # Hardened Raids — build
 
-RimWorld 1.7 tourne sur .NET 10 (moteur Waylith) : le mod cible `net10.0`.
-
-SDK installé en local (sans sudo) dans `~/.dotnet` :
+RimWorld 1.7 runs on .NET 10 (Waylith engine): the mod targets `net10.0`.
 
 ```bash
-export DOTNET_ROOT=~/.dotnet PATH=~/.dotnet:$PATH
 cd Source/HardenedRaids
 dotnet build -c Release
 ```
 
-La DLL sort directement dans `Assemblies/`. Références : `Krafs.Rimworld.Ref 1.7.5000-unstable`
-(même build que le jeu) et `Lib.Harmony` (fourni à l'exécution par le mod Harmony, non copié).
-`Vehicles.dll` / `SmashTools.dll` sont référencés depuis le Workshop (Vehicle Framework, id 3014915404) ;
-autre emplacement : `dotnet build -c Release -p:VFDir=/chemin/vers/Assemblies`.
+The DLL is written directly to `Assemblies/`. References: `Krafs.Rimworld.Ref 1.7.5000-unstable`
+and `Lib.Harmony` (provided at runtime by the Harmony mod, not copied).
+`Vehicles.dll` / `SmashTools.dll` are referenced from the Steam Workshop copy of Vehicle Framework (id 3014915404);
+other location: `dotnet build -c Release -p:VFDir=/path/to/Assemblies`. Vehicle Framework stays optional at runtime.
+
+Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default `~/HardenedRaidsRelease`, never inside `Mods/`).
 
 ## Structure
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `PointsPatches.cs` | plafond de 10 000 (transpiler) + courbes richesse prolongées au-delà de 1M |
-| `Tiers.cs` | paliers T0-T6 (industriel+) et N0-N5 (néolithique/médiéval), courbes points → palier |
-| `Pricing.cs` | grades (1 sous-officier / 10, 1 officier / 100), qualité gaussienne tronquée par grade, prix = corps + valeur de l'équipement ÷ taux, blocage des armures / mécanoïdes blindés, prix des mécanoïdes blindés |
-| `RaidPlanner.cs` | modèle C (noyau + troupe), choix des pawnkinds, rôles, génération |
-| `Loadouts.cs` | tables d'objets par faction, dotation uniforme (armure, armes par rôle, implants, GiTS) |
-| `PawnTuning.cs` | santé, implants, skills, port de l'équipement, marqueur de palier |
-| `GenerationPatches.cs` | branchements Harmony dans la génération vanilla |
-| `CECompat.cs` | munitions Combat Extended (par réflexion, optionnel) |
-| `Waves.cs` | vagues différées (GameComponent sauvegardé) |
-| `AIPatches.cs` | poids des stratégies smart/brèche/sape, grille d'évitement des tourelles |
-| `SiegePatches.cs` | camps de siège : artillerie et tourelles des mods (servies ou auto), couverture tournée vers la base |
-| `SupportTeams.cs` | équipes d'appui (camp avancé pendant un assaut) + ravitaillement des tourelles ennemies |
-| `Convoy.cs` | convoi ennemi : approche moteur allumé, débarquement, tourelles de camion (dotation uniforme), appui-feu (Burya, Scytheman), retraite et rembarquement (`Defs/HR_AI.xml`) |
-| `VehicleCompat.cs` | véhicules ennemis via Vehicle Framework (seule classe qui touche aux types VF) |
-| `DebugActions.cs` | mode dev → « Hardened Raids » → aperçu des plans / vagues en attente |
+| `PointsPatches.cs` | 10,000 points cap (transpiler) + wealth curves extended beyond 1M |
+| `Tiers.cs` | tiers T0-T6 (industrial+) and N0-N5 (neolithic/medieval), points → tier curves |
+| `Pricing.cs` | ranks (1 NCO / 10, 1 officer / 100), truncated gaussian quality per rank, price = body + gear value ÷ rate, armor / armored mechanoid gate and pricing |
+| `RaidPlanner.cs` | raid plan (core + troops), pawnkinds, roles, generation, vehicle and transport purchase |
+| `Loadouts.cs` | per-faction item tables, uniform loadout (armor, weapons per role, implants, GiTS cyberbrains) |
+| `PawnTuning.cs` | health, implants (no adaptation phase), skills, gear, sidearms, biocoding + acidifier, tier marker |
+| `GenerationPatches.cs` | Harmony hooks into vanilla pawn generation |
+| `CECompat.cs` | Combat Extended ammo (reflection, optional) and AI ammo type weights |
+| `Waves.cs` | delayed waves (saved GameComponent) |
+| `AIPatches.cs` | smart/breach/sapper strategy weights, turret avoid grid, out-of-service turrets |
+| `SiegePatches.cs` | siege camps: modded artillery and turrets (manned or automatic), cover facing the base |
+| `SupportTeams.cs` | support teams (forward camp during an assault) + enemy turret resupply |
+| `Convoy.cs` | enemy convoy: approach, dismount, truck turrets, fire support, retreat and re-boarding (`Defs/HR_AI.xml`) |
+| `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (the only file touching VF types) |
+| `Strings.cs` | player-facing strings (English / French), selected by the mod's language setting |
+| `HRSettings.cs` | settings window, startup |
+| `DebugActions.cs` | dev mode → "Hardened Raids" → raid plan preview / pending waves |
+
+Source comments and the detailed (debug) log are in French.

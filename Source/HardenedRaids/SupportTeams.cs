@@ -45,7 +45,7 @@ namespace HardenedRaids
             foreach (Pawn p in team) pawns.Remove(p);
             float blueprintPoints = Mathf.Max(60f, parms.points * 0.25f);
             LordMaker.MakeNewLord(parms.faction, new LordJob_Siege(parms.faction, spot, blueprintPoints), map, team);
-            Messages.Message($"Une équipe d'appui de {parms.faction.Name} ({team.Count} hommes) installe des positions de tir.",
+            Messages.Message(Strings.T("MsgSupportTeam", parms.faction.Name, team.Count),
                 new TargetInfo(spot, map), MessageTypeDefOf.ThreatBig);
             HRLog.Msg($"équipe d'appui : {team.Count} raiders, camp en {spot} (palier {x:F1}).");
         }
@@ -59,7 +59,7 @@ namespace HardenedRaids
         {
             if (!__result || debugTest) return;
             try { SupportTeams.TryDeploy(parms, pawns); }
-            catch (Exception e) { Log.Warning("[Hardened Raids] équipe d'appui : " + e); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] support team: " + e); }
         }
     }
 
@@ -101,7 +101,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.WarningOnce("[Hardened Raids] ravitaillement des tourelles : " + e, 0x48524154);
+                Log.WarningOnce("[Hardened Raids] turret resupply: " + e, 0x48524154);
             }
         }
 

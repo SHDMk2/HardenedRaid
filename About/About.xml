@@ -3,6 +3,7 @@
   <name>Hardened Raids</name>
   <author>SHD2</author>
   <packageId>shdmk2.hardenedraids</packageId>
+  <url>https://github.com/SHDMk2/HardenedRaid</url>
   <supportedVersions>
     <li>1.7</li>
   </supportedVersions>
@@ -18,6 +19,7 @@
     <li>ceteam.combatextended</li>
     <li>ceteam.combatextendedarmory</li>
     <li>moistestwhale.gitscyberbrains</li>
+    <li>petetimessix.simplesidearms</li>
     <li>smashphil.vehicleframework</li>
     <li>oskarpotocki.vanillavehiclesexpanded</li>
     <li>vanillaexpanded.vfesecurity</li>
@@ -26,15 +28,21 @@
   <incompatibleWith>
     <li>unlimitedthreatscale.1trickpwnyta</li>
   </incompatibleWith>
-  <description>Raids plus durs et plus cohérents.
+  <description>Harder, more coherent raids for the late game.
 
-- Plus de plafond de 10 000 points, courbes richesse → points prolongées au-delà de 1M.
-- Paliers d'équipement : avant d'ajouter des raiders, on les améliore (santé, skills, armure, armes, implants).
-- Dotation uniforme par raid (mêmes armes, mêmes munitions), dans les tables d'objets de la faction.
-- Vagues : 100 raiders max (industriel+), 300 (néolithique/médiéval).
-- IA : stratégies smart/brèche/sape plus fréquentes à haut palier, les vétérans évitent les tourelles.
-- Sièges renforcés : artillerie des mods (Fortifications, VFE Security, CE Armory...), tranchées, tourelles.
-- Véhicules ennemis (Vehicle Framework + VVE, expérimental) : blindés avec équipage, munitions et carburant.
+Instead of throwing ever more naked raiders at you, raids first get better: healthier, more skilled, better armed and armored. Only then do they grow in numbers.
 
-Compatible Combat Extended, GiTS Cyberbrains, Vehicle Framework / VVE, Fortifications, VFE Security.</description>
+- No 10,000 points cap; wealth → points curves extended beyond 1M.
+- Equipment tiers (T1 to T6, N1 to N5 for tribals): health, skills, armor, weapons, implants.
+- Value-based pricing: a raider costs its body plus the market value of its gear. Quality by rank (soldier, NCO, officer); masterwork and legendary stay rare.
+- Uniform loadout per raid (same weapons, same ammo), taken from the faction's own item tables.
+- Strong armor and armored mechanoids are gated by raid points and by your colony's research.
+- Waves: up to 100 raiders per wave (industrial+), 300 (neolithic/medieval).
+- AI: smart, breach and sapper raids become more common at high tiers; veterans avoid turret fire; out-of-service turrets are ignored.
+- Reinforced sieges: modded artillery (Fortifications, VFE Security, CE Armory...), trenches, turrets; support teams during assaults.
+- Enemy vehicles (Vehicle Framework + Vanilla Vehicles Expanded, experimental): tanks, fire support, trucks and IFVs, with crews, ammo and fuel.
+
+All optional mods are detected at runtime: Combat Extended, GiTS Cyberbrains, Simple Sidearms, Vehicle Framework / VVE, Fortifications, VFE Security.
+
+Every feature can be tuned or disabled in the mod settings. Language option in mod settings (English by default, French available).</description>
 </ModMetaData>

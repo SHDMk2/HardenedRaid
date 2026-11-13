@@ -14,20 +14,24 @@
     <OutputType>Library</OutputType>
     <Optimize>true</Optimize>
     <DebugType>portable</DebugType>
+    <Deterministic>true</Deterministic>
+    <EnableSourceLink>false</EnableSourceLink>
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
+    <PathMap>$(MSBuildProjectDirectory)=/_/HardenedRaids</PathMap>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Références officielles RimWorld 1.7.5000 (pas de redistribution) -->
+    <!-- Official RimWorld 1.7.5000 reference assemblies (not redistributed) -->
     <PackageReference Include="Krafs.Rimworld.Ref" Version="1.7.5000-unstable">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
-    <!-- Harmony : fourni à l'exécution par le mod Harmony -->
+    <!-- Harmony: provided at runtime by the Harmony mod -->
     <PackageReference Include="Lib.Harmony" Version="2.3.6">
       <ExcludeAssets>runtime</ExcludeAssets>
     </PackageReference>
   </ItemGroup>
 
-  <!-- Vehicle Framework (optionnel à l'exécution : utilisé uniquement si le mod est actif) -->
+  <!-- Vehicle Framework (optional at runtime: only used when the mod is active). Override with -p:VFDir=... -->
   <PropertyGroup>
     <VFDir Condition="'$(VFDir)' == ''">$(HOME)/.local/share/Steam/steamapps/workshop/content/294100/3014915404/1.6/Assemblies</VFDir>
   </PropertyGroup>

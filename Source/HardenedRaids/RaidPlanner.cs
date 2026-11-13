@@ -164,12 +164,13 @@ namespace HardenedRaids
             {
                 try
                 {
-                    vehicles = VehicleCompat.Plan(parms.faction, parms.points, tierX, rng, out float vCost);
+                    // premier passage sans transports (que des légers) : sert à estimer les places et le reste pour l'infanterie
+                    vehicles = VehicleCompat.Plan(parms.faction, parms.points, tierX, 0, rng, out float vCost);
                     if (wave == null) infantryPoints = Mathf.Max(parms.points * 0.5f, parms.points - vCost);
                 }
                 catch (Exception e)
                 {
-                    Log.Warning("[Hardened Raids] choix des véhicules : " + e.Message);
+                    Log.Warning("[Hardened Raids] vehicle selection: " + e.Message);
                     vehicles = null;
                 }
             }
@@ -184,19 +185,23 @@ namespace HardenedRaids
                 {
                     List<ThingDef> transports = VehicleCompat.PlanTransports(parms.faction, parms.points, tierX,
                         plan.thisWave - VehicleCompat.SeatsIn(vehicles), rng, out float tCost);
-                    if (transports.Count > 0)
+                    // second passage : tanks / appui-feu selon le nombre de transports (1 tank pour 4)
+                    float vCost0 = vehicles.Sum(VehicleCompat.Cost);
+                    List<ThingDef> armored = VehicleCompat.Plan(parms.faction, parms.points, tierX, transports.Count, rng, out float vCost);
+                    if (armored.Count > 0) vehicles = armored; else vCost = vCost0;
+                    if (transports.Count > 0 || vCost != vCost0)
                     {
                         vehicles.AddRange(transports);
                         if (wave == null)
                         {
-                            infantryPoints = Mathf.Max(parms.points * 0.5f, infantryPoints - tCost);
+                            infantryPoints = Mathf.Max(parms.points * 0.5f, parms.points - vCost - tCost);
                             plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, needBreacher, rng) ?? plan;
                         }
                     }
                 }
                 catch (Exception e)
                 {
-                    Log.Warning("[Hardened Raids] choix des transports : " + e.Message);
+                    Log.Warning("[Hardened Raids] transport selection: " + e.Message);
                 }
             }
 
@@ -334,10 +339,11 @@ namespace HardenedRaids
                 PawnTuning.ApplySkills(pawn, s);
                 PawnTuning.Mark(pawn, s.tierIndex);
                 PawnTuning.ApplyHarshDeath(pawn, s);
+                if (s.tier.healthy) PawnTuning.ReplaceSidearms(pawn, s);
             }
             catch (Exception e)
             {
-                Log.Warning("[Hardened Raids] post-traitement de " + pawn + " : " + e.Message);
+                Log.Warning("[Hardened Raids] post-processing of " + pawn + " : " + e.Message);
             }
             return pawn;
         }

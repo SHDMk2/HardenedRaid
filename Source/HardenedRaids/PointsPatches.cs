@@ -31,7 +31,7 @@ namespace HardenedRaids
                 }
                 yield return ins;
             }
-            if (!done) Log.Error("[Hardened Raids] plafond de 10000 introuvable dans DefaultThreatPointsNow : le déplafonnement est inactif.");
+            if (!done) Log.Error("[Hardened Raids] 10000 cap not found in DefaultThreatPointsNow: points uncapping is inactive.");
         }
 
         /// <summary>Ajoute (ou retire) un point lointain qui prolonge la pente du dernier segment.</summary>
@@ -42,7 +42,7 @@ namespace HardenedRaids
                 FieldInfo fi = AccessTools.Field(typeof(StorytellerUtility), name);
                 if (fi?.GetValue(null) is not SimpleCurve curve)
                 {
-                    Log.Warning("[Hardened Raids] courbe introuvable : " + name);
+                    Log.Warning("[Hardened Raids] curve not found: " + name);
                     continue;
                 }
                 if (!originals.TryGetValue(name, out List<CurvePoint> orig))

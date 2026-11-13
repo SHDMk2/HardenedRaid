@@ -1,3 +1,5 @@
+using System;
+using System.Reflection;
 using HarmonyLib;
 using RimWorld;
 using UnityEngine;
@@ -40,6 +42,67 @@ namespace HardenedRaids
             if (PawnTuning.TierOf(p) < 2) return;
             grid = p.Map.avoidGrid;
             __result = grid != null;
+        }
+    }
+
+    /// <summary>
+    /// Tourelle hors service = plus une menace : vanilla ne regarde que le courant et le servant ; on ajoute le
+    /// chargeur vide (CE) et le carburant / les munitions épuisés (CompRefuelable). L'IA cesse donc de la viser.
+    /// </summary>
+    [HarmonyPatch(typeof(Building_Turret), nameof(Building_Turret.ThreatDisabled))]
+    public static class Patch_TurretThreat
+    {
+        private static bool init;
+        private static Type ammoUser;
+        private static PropertyInfo useAmmo, emptyMag;
+
+        public static void Postfix(Building_Turret __instance, ref bool __result)
+        {
+            if (__result || !HRSettings.IgnoreDeadTurrets) return;
+            try { __result = OutOfService(__instance); }
+            catch { }
+        }
+
+        public static bool OutOfService(Building_Turret t)
+        {
+            CompRefuelable fuel = t.GetComp<CompRefuelable>();
+            if (fuel != null && !fuel.HasFuel) return true;
+            if (!init)
+            {
+                init = true;
+                ammoUser = AccessTools.TypeByName("CombatExtended.CompAmmoUser");
+                if (ammoUser != null)
+                {
+                    useAmmo = AccessTools.Property(ammoUser, "UseAmmo");
+                    emptyMag = AccessTools.Property(ammoUser, "EmptyMagazine");
+                }
+            }
+            if (useAmmo == null || emptyMag == null) return false;
+            if (t is Building_TurretGun vg) return Empty(vg) || Empty(vg.gun as ThingWithComps);
+            if (!gunProps.TryGetValue(t.GetType(), out PropertyInfo gp))
+                gunProps[t.GetType()] = gp = AccessTools.Property(t.GetType(), "Gun");
+            return Empty(t) || Empty(gp?.GetValue(t) as ThingWithComps);
+        }
+
+        private static readonly System.Collections.Generic.Dictionary<Type, PropertyInfo> gunProps = new System.Collections.Generic.Dictionary<Type, PropertyInfo>();
+
+        private static bool Empty(ThingWithComps th)
+        {
+            if (th == null) return false;
+            foreach (ThingComp comp in th.AllComps)
+                if (ammoUser.IsInstanceOfType(comp)) return (bool)useAmmo.GetValue(comp) && (bool)emptyMag.GetValue(comp);
+            return false;
+        }
+    }
+
+    /// <summary>Les raiders ne « saccagent » pas (tir à volonté) une tourelle hors service : ils passent aux vraies cibles.</summary>
+    [HarmonyPatch(typeof(TrashUtility), nameof(TrashUtility.ShouldTrashBuilding), new[] { typeof(Pawn), typeof(Building), typeof(bool) })]
+    public static class Patch_TrashDeadTurret
+    {
+        public static void Postfix(Pawn pawn, Building b, ref bool __result)
+        {
+            if (!__result || !HRSettings.IgnoreDeadTurrets || pawn?.Faction == null || pawn.Faction.IsPlayer) return;
+            if (b is Building_Turret t && t.ThreatDisabled(pawn)) __result = false;
         }
     }
 }

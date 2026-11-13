@@ -45,6 +45,24 @@ namespace HardenedRaids
             var parts = new List<ThingDef>(s.implants ?? new List<ThingDef>());
             if (s.brain != null) parts.Add(s.brain);
             foreach (ThingDef d in parts) InstallPart(pawn, d);
+            SkipAdaptation(pawn, parts);
+        }
+
+        /// <summary>
+        /// Pièces à phase d'adaptation (cyberbrains GiTS : stade « adapting » qui monte de 0,5/jour) : un raider arrive
+        /// avec des implants posés depuis longtemps, on saute directement au dernier stade.
+        /// </summary>
+        private static void SkipAdaptation(Pawn pawn, List<ThingDef> parts)
+        {
+            foreach (Hediff h in pawn.health.hediffSet.hediffs)
+            {
+                if (h.def.spawnThingOnRemoved == null || !parts.Contains(h.def.spawnThingOnRemoved)) continue;
+                if (h.def.stages == null || h.def.stages.Count < 2) continue;
+                if (h.TryGetComp<HediffComp_SeverityPerDay>() == null) continue;
+                float target = h.def.stages[h.def.stages.Count - 1].minSeverity;
+                if (h.def.maxSeverity > 0f) target = Math.Min(target, h.def.maxSeverity);
+                if (h.Severity < target) h.Severity = target;
+            }
         }
 
         private static void InstallPart(Pawn pawn, ThingDef d)
@@ -58,6 +76,42 @@ namespace HardenedRaids
             {
                 HRLog.Msg($"implant {d.defName} impossible sur {pawn} : {e.InnerException?.Message ?? e.Message}");
             }
+        }
+
+        // ------------------------------------------------------------ armes de secours
+        /// <summary>
+        /// Simple Sidearms tire l'arme de secours dans les tags et le budget du pawnkind vanilla (bières, bûches,
+        /// massues, lance-roquettes jetables...) : on retire ces armes de l'inventaire et on donne à la place l'arme
+        /// de corps à corps de la dotation (qualité selon le grade). Les grenades restent ; un jetable seulement en brèche.
+        /// </summary>
+        public static void ReplaceSidearms(Pawn pawn, Slot s)
+        {
+            if (pawn.inventory?.innerContainer == null) return;
+            var removed = new List<string>();
+            foreach (Thing t in pawn.inventory.innerContainer.ToList())
+            {
+                ThingDef d = t.def;
+                if (!d.IsWeapon || d.IsStuff || Loadouts.IsGrenade(d)) continue;
+                if (s.role == Role.Breacher && Loadouts.IsDestructive(d)) continue;
+                if (!(d.IsMeleeWeapon || d.IsRangedWeapon)) continue;
+                pawn.inventory.innerContainer.Remove(t);
+                removed.Add(d.label);
+                t.Destroy();
+            }
+            ThingStuffPair? side = s.loadout.SidearmFor(s.role);
+            Thing added = null;
+            if (side.HasValue && pawn.equipment?.Primary != null && pawn.equipment.Primary.def != side.Value.thing)
+            {
+                added = ThingMaker.MakeThing(side.Value.thing, side.Value.stuff);
+                FinishGear(added, pawn, s);
+                if (!pawn.inventory.innerContainer.TryAdd(added)) { added.Destroy(); added = null; }
+            }
+            if (removed.Count == 0 && added == null) return;
+            // mémoire de Simple Sidearms : reconstruite d'après ce qui est réellement porté
+            ThingComp mem = (pawn as ThingWithComps).AllComps.FirstOrDefault(c => c.GetType().Name == "CompSidearmMemory");
+            if (mem != null) AccessTools.Method(mem.GetType(), "GenerateRememberedWeaponsFromEquipped")?.Invoke(mem, null);
+            if (removed.Count > 0)
+                HRLog.Msg($"{pawn.LabelShort} : arme(s) de secours remplacée(s) ({string.Join(", ", removed)} → {added?.LabelCap ?? "rien"}).");
         }
 
         // ------------------------------------------------------------ biocodage + acidificateur (sans effet sur le prix)

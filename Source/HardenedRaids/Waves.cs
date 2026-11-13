@@ -54,8 +54,8 @@ namespace HardenedRaids
                     points = basePoints * n / plan.total, tierX = plan.tierX, count = n, index = i, totalWaves = plan.waves,
                 });
             }
-            Messages.Message($"Hardened Raids : {parms.faction.Name} attaque en {plan.waves} vagues ({plan.total} raiders au total). " +
-                             $"Prochaine vague dans {HRSettings.WaveDelayHoursMin:F0}-{HRSettings.WaveDelayHoursMax:F0} h.",
+            Messages.Message(Strings.T("MsgWaves", parms.faction.Name, plan.waves, plan.total,
+                                 $"{HRSettings.WaveDelayHoursMin:F0}-{HRSettings.WaveDelayHoursMax:F0} h"),
                              MessageTypeDefOf.ThreatBig);
         }
     }

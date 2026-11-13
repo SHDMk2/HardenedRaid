@@ -28,6 +28,7 @@ namespace HardenedRaids
         // --- IA ---
         public static bool SmarterStrategies = true;
         public static bool VeteransAvoidTurrets = true;
+        public static bool IgnoreDeadTurrets = true;
 
         // --- Partie 2 : sièges et véhicules ---
         public static bool SiegeUpgrade = true;
@@ -49,7 +50,8 @@ namespace HardenedRaids
         public static float SupportMinTier = 3f;
         public static float SupportShare = 0.12f;  // part des raiders qui montent le camp d'appui
 
-        public static bool VerboseLog = true;
+        public static bool VerboseLog = false;
+        public static HRLanguage Language = HRLanguage.English;
 
         public override void ExposeData()
         {
@@ -70,6 +72,7 @@ namespace HardenedRaids
             Scribe_Values.Look(ref WaveDelayHoursMax, "WaveDelayHoursMax", 6f);
             Scribe_Values.Look(ref SmarterStrategies, "SmarterStrategies", true);
             Scribe_Values.Look(ref VeteransAvoidTurrets, "VeteransAvoidTurrets", true);
+            Scribe_Values.Look(ref IgnoreDeadTurrets, "IgnoreDeadTurrets", true);
             Scribe_Values.Look(ref SiegeUpgrade, "SiegeUpgrade", true);
             Scribe_Values.Look(ref MaxSiegeArtillery, "MaxSiegeArtillery", 8);
             Scribe_Values.Look(ref MaxSiegeTurrets, "MaxSiegeTurrets", 6);
@@ -88,7 +91,8 @@ namespace HardenedRaids
             Scribe_Values.Look(ref EnableSupportTeams, "EnableSupportTeams", true);
             Scribe_Values.Look(ref SupportMinTier, "SupportMinTier", 3f);
             Scribe_Values.Look(ref SupportShare, "SupportShare", 0.12f);
-            Scribe_Values.Look(ref VerboseLog, "VerboseLog", true);
+            Scribe_Values.Look(ref VerboseLog, "VerboseLog", false);
+            Scribe_Values.Look(ref Language, "Language", HRLanguage.English);
         }
 
         public static void DoWindow(Rect rect)
@@ -96,79 +100,82 @@ namespace HardenedRaids
             var l = new Listing_Standard { ColumnWidth = rect.width / 2f - 17f };
             l.Begin(rect);
 
-            l.Label("<b>Points de raid</b>");
-            l.CheckboxLabeled("Supprimer le plafond de 10 000 points", ref UncapPoints);
-            bool before = ExtendWealthCurves;
-            l.CheckboxLabeled("Prolonger les courbes richesse → points au-delà de 1M", ref ExtendWealthCurves,
-                "Vanilla arrête de compter la richesse après 1 000 000. Activé : la courbe continue avec la même pente.");
-            if (before != ExtendWealthCurves) PointsPatches.ApplyCurves();
-            if (Current.ProgramState == ProgramState.Playing && Find.CurrentMap != null)
+            Rect langRow = l.GetRect(28f);
+            Widgets.Label(langRow.LeftHalf(), Strings.T("Language"));
+            if (Widgets.ButtonText(langRow.RightHalf().LeftPartPixels(140f), Strings.LanguageName(Language)))
             {
-                l.Label($"Points actuels sur cette carte : {RimWorld.StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap):F0}");
+                var options = new System.Collections.Generic.List<FloatMenuOption>();
+                foreach (HRLanguage lang in System.Enum.GetValues(typeof(HRLanguage)))
+                {
+                    HRLanguage x = lang;
+                    options.Add(new FloatMenuOption(Strings.LanguageName(x), () => Language = x));
+                }
+                Find.WindowStack.Add(new FloatMenu(options));
             }
             l.GapLine();
 
-            l.Label("<b>Génération par paliers</b>");
-            l.CheckboxLabeled("Activer les paliers d'équipement", ref EnableTiers);
-            CostFactor = l.SliderLabeled($"Coût des raiders équipés : ×{CostFactor:F2}", CostFactor, 0.5f, 2f, 0.5f,
-                "Multiplie le prix de chaque raider. Plus haut = moins de raiders mais aussi bien équipés.");
-            CostFactor = Mathf.Round(CostFactor * 20f) / 20f;
-            TierSpeed = l.SliderLabeled($"Vitesse de montée en palier : ×{TierSpeed:F2}", TierSpeed, 0.5f, 3f, 0.5f,
-                "Plus haut = les raiders atteignent les paliers élevés avec moins de points.");
-            TierSpeed = Mathf.Round(TierSpeed * 20f) / 20f;
-            l.CheckboxLabeled("Cyberbrains GiTS pour les vétérans (si le mod est actif)", ref AddCyberbrains);
-            ValueDivisor = Mathf.Round(l.SliderLabeled($"Équipement : {ValueDivisor:F0} $ par point", ValueDivisor, 15f, 100f, 0.5f,
-                "Prix d'un raider = corps + valeur de son équipement (qualité, implants, cyberbrain compris) ÷ ce taux. 40 ≈ vanilla. Plus bas = équipement plus cher = moins de raiders."));
-            l.CheckboxLabeled("Limiter les armures solides selon les points et la recherche de la colonie", ref ArmorGate,
-                "Armures et mécanoïdes blindés plafonnés par les points du raid (marine vers 6 000 pts), et pas d'armure spacer tant que la colonie n'a fini aucune recherche spacer.");
-            HarshDeathShare = Mathf.Round(l.SliderLabeled($"Raiders biocodés + acidificateur : {HarshDeathShare:P0}", HarshDeathShare, 0f, 1f, 0.5f,
-                "Industriel et au-delà. Arme biocodée et acidificateur (l'équipement fond à la mort). Sans effet sur le prix.") * 20f) / 20f;
-            HeavyMechCostFactor = Mathf.Round(l.SliderLabeled($"Prix des mécanoïdes blindés : ×{HeavyMechCostFactor:F2}", HeavyMechCostFactor, 1f, 4f, 0.5f,
-                "Centipède, Termite, Diabolus, Warqueen… (protection ≥ 75 % de l'armure de marine).") * 4f) / 4f;
+            l.Label(Strings.T("SecPoints"));
+            l.CheckboxLabeled(Strings.T("UncapPoints"), ref UncapPoints);
+            bool before = ExtendWealthCurves;
+            l.CheckboxLabeled(Strings.T("ExtendCurves"), ref ExtendWealthCurves, Strings.T("ExtendCurvesTip"));
+            if (before != ExtendWealthCurves) PointsPatches.ApplyCurves();
+            if (Current.ProgramState == ProgramState.Playing && Find.CurrentMap != null)
+                l.Label(Strings.T("PointsNow", RimWorld.StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap).ToString("F0")));
             l.GapLine();
 
-            l.Label("<b>Vagues</b>");
-            CapHighTech = (int)l.SliderLabeled($"Raiders max par vague (industriel+) : {CapHighTech}", CapHighTech, 20, 300, 0.5f);
-            CapLowTech = (int)l.SliderLabeled($"Raiders max par vague (néolithique/médiéval) : {CapLowTech}", CapLowTech, 50, 600, 0.5f);
-            WaveDelayHoursMin = Mathf.Round(l.SliderLabeled($"Délai min entre vagues : {WaveDelayHoursMin:F1} h", WaveDelayHoursMin, 0.5f, 24f, 0.5f) * 2f) / 2f;
-            WaveDelayHoursMax = Mathf.Round(l.SliderLabeled($"Délai max entre vagues : {WaveDelayHoursMax:F1} h", WaveDelayHoursMax, 0.5f, 24f, 0.5f) * 2f) / 2f;
+            l.Label(Strings.T("SecTiers"));
+            l.CheckboxLabeled(Strings.T("EnableTiers"), ref EnableTiers);
+            CostFactor = l.SliderLabeled(Strings.T("CostFactor", CostFactor.ToString("F2")), CostFactor, 0.5f, 2f, 0.5f, Strings.T("CostFactorTip"));
+            CostFactor = Mathf.Round(CostFactor * 20f) / 20f;
+            TierSpeed = l.SliderLabeled(Strings.T("TierSpeed", TierSpeed.ToString("F2")), TierSpeed, 0.5f, 3f, 0.5f, Strings.T("TierSpeedTip"));
+            TierSpeed = Mathf.Round(TierSpeed * 20f) / 20f;
+            l.CheckboxLabeled(Strings.T("Cyberbrains"), ref AddCyberbrains);
+            ValueDivisor = Mathf.Round(l.SliderLabeled(Strings.T("ValueDivisor", ValueDivisor.ToString("F0")), ValueDivisor, 15f, 100f, 0.5f, Strings.T("ValueDivisorTip")));
+            l.CheckboxLabeled(Strings.T("ArmorGate"), ref ArmorGate, Strings.T("ArmorGateTip"));
+            HarshDeathShare = Mathf.Round(l.SliderLabeled(Strings.T("HarshDeath", HarshDeathShare.ToString("P0")), HarshDeathShare, 0f, 1f, 0.5f,
+                Strings.T("HarshDeathTip")) * 20f) / 20f;
+            HeavyMechCostFactor = Mathf.Round(l.SliderLabeled(Strings.T("HeavyMech", HeavyMechCostFactor.ToString("F2")), HeavyMechCostFactor, 1f, 4f, 0.5f,
+                Strings.T("HeavyMechTip")) * 4f) / 4f;
+            l.GapLine();
+
+            l.Label(Strings.T("SecWaves"));
+            CapHighTech = (int)l.SliderLabeled(Strings.T("CapHigh", CapHighTech), CapHighTech, 20, 300, 0.5f);
+            CapLowTech = (int)l.SliderLabeled(Strings.T("CapLow", CapLowTech), CapLowTech, 50, 600, 0.5f);
+            WaveDelayHoursMin = Mathf.Round(l.SliderLabeled(Strings.T("WaveMin", WaveDelayHoursMin.ToString("F1")), WaveDelayHoursMin, 0.5f, 24f, 0.5f) * 2f) / 2f;
+            WaveDelayHoursMax = Mathf.Round(l.SliderLabeled(Strings.T("WaveMax", WaveDelayHoursMax.ToString("F1")), WaveDelayHoursMax, 0.5f, 24f, 0.5f) * 2f) / 2f;
             if (WaveDelayHoursMax < WaveDelayHoursMin) WaveDelayHoursMax = WaveDelayHoursMin;
             l.GapLine();
+            l.CheckboxLabeled(Strings.T("VerboseLog"), ref VerboseLog);
 
             l.NewColumn();
-            l.Label("<b>IA</b>");
-            l.CheckboxLabeled("Stratégies plus intelligentes selon le palier (smart, brèche, sape)", ref SmarterStrategies);
-            l.CheckboxLabeled("Les vétérans (T2+) évitent les zones couvertes par les tourelles", ref VeteransAvoidTurrets);
+            l.Label(Strings.T("SecAI"));
+            l.CheckboxLabeled(Strings.T("Smarter"), ref SmarterStrategies);
+            l.CheckboxLabeled(Strings.T("AvoidTurrets"), ref VeteransAvoidTurrets);
+            l.CheckboxLabeled(Strings.T("DeadTurrets"), ref IgnoreDeadTurrets);
             l.GapLine();
 
-            l.Label("<b>Sièges et véhicules</b>");
-            l.CheckboxLabeled("Camps de siège renforcés (artillerie, tourelles des mods, tranchées face à la base)", ref SiegeUpgrade);
-            MaxSiegeArtillery = (int)l.SliderLabeled($"Pièces d'artillerie max par siège : {MaxSiegeArtillery}", MaxSiegeArtillery, 2, 16, 0.5f);
-            MaxSiegeTurrets = (int)l.SliderLabeled($"Tourelles max par siège : {MaxSiegeTurrets}", MaxSiegeTurrets, 0, 12, 0.5f);
-            l.CheckboxLabeled("Équipes d'appui pendant les assauts (camp avancé avec tourelles)", ref EnableSupportTeams,
-                "Une partie des raiders industriels+ arrivant par le bord installe un camp de tir (comme un siège) pendant que les autres attaquent.");
-            SupportMinTier = Mathf.Round(l.SliderLabeled($"Palier minimum des équipes d'appui : {SupportMinTier:F0}", SupportMinTier, 1f, 6f, 0.5f));
-            SupportShare = Mathf.Round(l.SliderLabeled($"Part des raiders en appui : {SupportShare:P0}", SupportShare, 0.05f, 0.4f, 0.5f) * 20f) / 20f;
-            l.CheckboxLabeled("Véhicules de combat ennemis (Vehicle Framework, expérimental)", ref EnableVehicles,
-                "Les raiders industriels+ arrivant à pied par le bord de la carte peuvent amener des blindés VVE.");
-            VehiclePointShare = Mathf.Round(l.SliderLabeled($"Part des points en véhicules : {VehiclePointShare:P0}", VehiclePointShare, 0.05f, 0.5f, 0.5f) * 20f) / 20f;
-            VehicleMinTier = Mathf.Round(l.SliderLabeled($"Palier minimum pour les véhicules : {VehicleMinTier:F0}", VehicleMinTier, 1f, 6f, 0.5f));
-            VehicleValueFactor = Mathf.Round(l.SliderLabeled($"Prix des blindés : valeur ÷ {ValueDivisor:F0} × {VehicleValueFactor:F1}", VehicleValueFactor, 1f, 15f, 0.5f,
-                "Même taux $/pt que l'équipement des raiders, multiplié pour le blindage. Plancher 400 pts.") * 2f) / 2f;
-            RocketVehicleFactor = Mathf.Round(l.SliderLabeled($"Véhicules à roquettes en essaim : ×{RocketVehicleFactor:F0}", RocketVehicleFactor, 1f, 20f, 0.5f,
-                "Scytheman, Burya : tir par-dessus les défenses, saturation anti-missile."));
-            ArtilleryVehicleFactor = Mathf.Round(l.SliderLabeled($"Véhicules d'artillerie : ×{ArtilleryVehicleFactor:F0}", ArtilleryVehicleFactor, 1f, 20f, 0.5f,
-                "Udar : tir indirect par-dessus les murs."));
-            MaxVehicles = (int)l.SliderLabeled($"Blindés max par vague : {MaxVehicles}", MaxVehicles, 1, 15, 0.5f);
-            TransportPointShare = Mathf.Round(l.SliderLabeled($"Part des points en transports : {TransportPointShare:P0}", TransportPointShare, 0f, 0.3f, 0.5f,
-                "Camions et IFV pour l'infanterie. Petits paliers : voitures bon marché ; fin de partie : IFV. Ce qui ne rentre pas marche.") * 20f) / 20f;
-            TransportValueFactor = Mathf.Round(l.SliderLabeled($"Prix des camions : valeur ÷ {ValueDivisor:F0} × {TransportValueFactor:F1}", TransportValueFactor, 0.5f, 5f, 0.5f,
-                "Les IFV (Tango, Badger, Paladin) sont au prix des blindés.") * 2f) / 2f;
-            MaxTransports = (int)l.SliderLabeled($"Transports max par vague : {MaxTransports}", MaxTransports, 0, 40, 0.5f);
-            l.CheckboxLabeled("Raid smart : tourelles déchargées devant les camions", ref TruckTurrets);
-            MaxTruckTurrets = (int)l.SliderLabeled($"Tourelles de camion max : {MaxTruckTurrets}", MaxTruckTurrets, 0, 10, 0.5f);
-            l.GapLine();
-            l.CheckboxLabeled("Journal détaillé (log)", ref VerboseLog);
+            l.Label(Strings.T("SecSiege"));
+            l.CheckboxLabeled(Strings.T("SiegeUpgrade"), ref SiegeUpgrade);
+            MaxSiegeArtillery = (int)l.SliderLabeled(Strings.T("SiegeArtillery", MaxSiegeArtillery), MaxSiegeArtillery, 2, 16, 0.5f);
+            MaxSiegeTurrets = (int)l.SliderLabeled(Strings.T("SiegeTurrets", MaxSiegeTurrets), MaxSiegeTurrets, 0, 12, 0.5f);
+            l.CheckboxLabeled(Strings.T("SupportTeams"), ref EnableSupportTeams, Strings.T("SupportTeamsTip"));
+            SupportMinTier = Mathf.Round(l.SliderLabeled(Strings.T("SupportMinTier", SupportMinTier.ToString("F0")), SupportMinTier, 1f, 6f, 0.5f));
+            SupportShare = Mathf.Round(l.SliderLabeled(Strings.T("SupportShare", SupportShare.ToString("P0")), SupportShare, 0.05f, 0.4f, 0.5f) * 20f) / 20f;
+            l.CheckboxLabeled(Strings.T("Vehicles"), ref EnableVehicles, Strings.T("VehiclesTip"));
+            VehiclePointShare = Mathf.Round(l.SliderLabeled(Strings.T("VehicleShare", VehiclePointShare.ToString("P0")), VehiclePointShare, 0.05f, 0.5f, 0.5f) * 20f) / 20f;
+            VehicleMinTier = Mathf.Round(l.SliderLabeled(Strings.T("VehicleMinTier", VehicleMinTier.ToString("F0")), VehicleMinTier, 1f, 6f, 0.5f));
+            VehicleValueFactor = Mathf.Round(l.SliderLabeled(Strings.T("VehicleValue", ValueDivisor.ToString("F0"), VehicleValueFactor.ToString("F1")), VehicleValueFactor, 1f, 15f, 0.5f,
+                Strings.T("VehicleValueTip")) * 2f) / 2f;
+            RocketVehicleFactor = Mathf.Round(l.SliderLabeled(Strings.T("RocketFactor", RocketVehicleFactor.ToString("F0")), RocketVehicleFactor, 1f, 20f, 0.5f, Strings.T("RocketFactorTip")));
+            ArtilleryVehicleFactor = Mathf.Round(l.SliderLabeled(Strings.T("ArtilleryFactor", ArtilleryVehicleFactor.ToString("F0")), ArtilleryVehicleFactor, 1f, 20f, 0.5f, Strings.T("ArtilleryFactorTip")));
+            MaxVehicles = (int)l.SliderLabeled(Strings.T("MaxVehicles", MaxVehicles), MaxVehicles, 1, 15, 0.5f);
+            TransportPointShare = Mathf.Round(l.SliderLabeled(Strings.T("TransportShare", TransportPointShare.ToString("P0")), TransportPointShare, 0f, 0.3f, 0.5f,
+                Strings.T("TransportShareTip")) * 20f) / 20f;
+            TransportValueFactor = Mathf.Round(l.SliderLabeled(Strings.T("TransportValue", ValueDivisor.ToString("F0"), TransportValueFactor.ToString("F1")), TransportValueFactor, 0.5f, 5f, 0.5f,
+                Strings.T("TransportValueTip")) * 2f) / 2f;
+            MaxTransports = (int)l.SliderLabeled(Strings.T("MaxTransports", MaxTransports), MaxTransports, 0, 40, 0.5f);
+            l.CheckboxLabeled(Strings.T("TruckTurrets"), ref TruckTurrets);
+            MaxTruckTurrets = (int)l.SliderLabeled(Strings.T("MaxTruckTurrets", MaxTruckTurrets), MaxTruckTurrets, 0, 10, 0.5f);
 
             l.End();
         }
@@ -185,7 +192,7 @@ namespace HardenedRaids
             var harmony = new HarmonyLib.Harmony("shdmk2.hardenedraids");
             harmony.PatchAll();
             Patch_SpawnNearVehicle.Apply(harmony);
-            Log.Message("[Hardened Raids] chargé.");
+            Log.Message("[Hardened Raids] loaded.");
         }
 
         public override string SettingsCategory() => "Hardened Raids";
@@ -199,8 +206,9 @@ namespace HardenedRaids
         static HRStartup()
         {
             PointsPatches.ApplyCurves();
+            try { CECompat.TuneAmmoChances(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] CE ammo: " + e.Message); }
             Loadouts.BuildCaches();
-            try { Patch_SiegeBlueprints.EnsureCatalog(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] catalogue de siège : " + e.Message); }
+            try { Patch_SiegeBlueprints.EnsureCatalog(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] siege catalog: " + e.Message); }
         }
     }
 

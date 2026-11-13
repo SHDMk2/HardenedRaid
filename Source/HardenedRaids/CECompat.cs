@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using RimWorld;
@@ -30,6 +32,36 @@ namespace HardenedRaids
             generate = AccessTools.Method(extType, "GenerateLoadoutFor", new[] { typeof(Pawn), typeof(float) });
             if (magField == null || generate == null) extType = null;
             return true;
+        }
+
+        // ------------------------------------------------------------ types de munitions tirés par l'IA
+        /// <summary>Munitions biologiques (Biological Warfare, patch CE) et toxiques : rares comme l'EMP.</summary>
+        private static readonly HashSet<string> BioClasses = new HashSet<string>
+            { "FleshBreaker", "Flu", "Malaria", "Necroa", "Plague", "Scaria", "SleepingSickness", "Toxic" };
+        public const float RareAmmoFactor = 0.05f;
+
+        /// <summary>
+        /// CE tire le type de munition au hasard pondéré par generateAllowChance : antigrain interdit (0 : exclu du
+        /// tirage), EMP et munitions biologiques / toxiques ×0,05. Vaut pour tous les PNJ générés.
+        /// </summary>
+        public static void TuneAmmoChances()
+        {
+            Type ammoType = AccessTools.TypeByName("CombatExtended.AmmoDef");
+            FieldInfo classField = ammoType != null ? AccessTools.Field(ammoType, "ammoClass") : null;
+            if (classField == null) return;
+            int banned = 0, rare = 0;
+            foreach (ThingDef d in DefDatabase<ThingDef>.AllDefsListForReading.Where(ammoType.IsInstanceOfType).ToList())
+            {
+                string cls = (classField.GetValue(d) as Def)?.defName ?? "";
+                string all = (d.defName + " " + cls).ToLowerInvariant();
+                if (all.Contains("antigrain")) { d.generateAllowChance = 0f; banned++; }
+                else if (cls.Contains("EMP") || d.defName.EndsWith("_EMP") || BioClasses.Contains(cls))
+                {
+                    d.generateAllowChance *= RareAmmoFactor;
+                    rare++;
+                }
+            }
+            HRLog.Msg($"munitions : {banned} type(s) antigrain interdit(s), {rare} type(s) EMP / biologiques rendus rares (×{RareAmmoFactor}).");
         }
 
         public static void EnsureAmmo(Pawn pawn)

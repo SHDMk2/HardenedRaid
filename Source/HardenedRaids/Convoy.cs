@@ -508,7 +508,7 @@ namespace HardenedRaids
             {
                 foreach (Pawn v in lord.ownedPawns.ToList()) Job.Unload(v, Map);
             }
-            catch (Exception e) { Log.Warning("[Hardened Raids] déploiement du convoi : " + e); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] convoy deployment: " + e); }
         }
 
         public override void UpdateAllDuties()
@@ -542,7 +542,7 @@ namespace HardenedRaids
         {
             base.Init();
             try { Job.StartRetreat(Map); }
-            catch (Exception e) { Log.Warning("[Hardened Raids] retraite du convoi : " + e); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] convoy retreat: " + e); }
         }
 
         public override void UpdateAllDuties()
@@ -559,7 +559,7 @@ namespace HardenedRaids
             int now = Find.TickManager.TicksGame;
             if (now % 60 != 0) return;
             try { Job.TickRetreat(Map, now); }
-            catch (Exception e) { Log.WarningOnce("[Hardened Raids] retraite du convoi : " + e, 0x48525254); }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] convoy retreat: " + e, 0x48525254); }
         }
     }
 
@@ -631,7 +631,7 @@ namespace HardenedRaids
             foreach (Pawn p in crew) p.GetLord()?.Notify_PawnLost(p, PawnLostCondition.ForcedToJoinOtherLord);
             Lord l = LordMaker.MakeNewLord(faction, new LordJob_HRTurretCrew(faction), map, crew);
             l.AddBuilding(b);
-            Messages.Message($"{faction.Name} décharge un(e) {def.label} devant ses camions.", new TargetInfo(b), MessageTypeDefOf.ThreatBig);
+            Messages.Message(Strings.T("MsgTruckTurret", faction.Name, def.label), new TargetInfo(b), MessageTypeDefOf.ThreatBig);
             HRLog.Msg($"tourelle de camion : {def.label} en {cell}, servant : {crew.FirstOrDefault()?.LabelShort ?? "aucun"}.");
             return 1;
         }

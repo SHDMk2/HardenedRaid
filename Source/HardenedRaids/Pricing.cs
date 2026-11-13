@@ -97,6 +97,8 @@ namespace HardenedRaids
             float v = lo.ApparelFor(role).Sum(p => p.Price);
             ThingStuffPair? w = lo.WeaponFor(role);
             if (w.HasValue) v += w.Value.Price;
+            ThingStuffPair? side = lo.SidearmFor(role);
+            if (side.HasValue) v += side.Value.Price;
             return v;
         }
 

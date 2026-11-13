@@ -35,6 +35,16 @@ namespace HardenedRaids
             return null;
         }
 
+        /// <summary>Arme de secours d'un tireur (Simple Sidearms) : l'arme de corps à corps de la dotation.</summary>
+        public ThingStuffPair? SidearmFor(Role r)
+        {
+            if (r == Role.Melee || !Loadouts.SidearmsActive) return null;
+            if (!weapons.TryGetValue(Role.Melee, out var me) || !me.HasValue) return null;
+            ThingStuffPair? prim = WeaponFor(r);
+            if (prim.HasValue && prim.Value.thing == me.Value.thing) return null;
+            return me;
+        }
+
         public string Describe()
         {
             string ap = apparel.Count == 0 ? "(vanilla)" : string.Join(", ", apparel.Select(Label));
@@ -79,7 +89,7 @@ namespace HardenedRaids
             }
             catch (Exception e)
             {
-                Log.Error("[Hardened Raids] construction du catalogue impossible : " + e);
+                Log.Error("[Hardened Raids] could not build the item catalog: " + e);
             }
         }
 
@@ -143,6 +153,9 @@ namespace HardenedRaids
         {
             if (d.HasComp(typeof(CompBladelinkWeapon))) return false;              // armes persona
             if (d.generateAllowChance <= 0f) return false;
+            // armes antigrain (pilum, roquettes) : interdites, comme leurs munitions
+            if (d.defName.IndexOf("antigrain", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            if (d.Verbs != null && d.Verbs.Any(v => v.defaultProjectile != null && v.defaultProjectile.defName.IndexOf("antigrain", StringComparison.OrdinalIgnoreCase) >= 0)) return false;
             return true;
         }
 
@@ -156,7 +169,13 @@ namespace HardenedRaids
 
         private static bool IsSniper(ThingDef d) => d.weaponTags != null && d.weaponTags.Any(t => t.Contains("Sniper"));
 
-        private static bool IsGrenadeOrSingleUse(ThingDef d) =>
+        /// <summary>Simple Sidearms chargé (composant mémoire des armes sur les humains).</summary>
+        public static bool SidearmsActive => sidearmsActive ??= ThingDefOf.Human.comps.Any(c => c.compClass?.Name == "CompSidearmMemory");
+        private static bool? sidearmsActive;
+
+        public static bool IsGrenade(ThingDef d) => d.weaponTags != null && d.weaponTags.Any(t => t.Contains("Grenade"));
+
+        public static bool IsGrenadeOrSingleUse(ThingDef d) =>
             d.weaponTags != null && d.weaponTags.Any(t => t.Contains("Grenade") || t == "GunSingleUse");
 
         // ---------------------------------------------------------------- armure
