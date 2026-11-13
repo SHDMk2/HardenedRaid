@@ -30,45 +30,224 @@ namespace HardenedRaids
                 .Where(v => v.type == VehicleType.Land && (v.vehicleCategory & VehicleCategory.Combat) != 0
                             && (v.enabled & VehicleEnabled.For.Raiders) != 0)
                 .Cast<ThingDef>().ToList();
-            HRLog.Msg($"véhicules de combat disponibles : {string.Join(", ", combatVehicles.Select(v => $"{v.defName} ({Cost(v):F0} pts)"))}");
+            HRLog.Msg($"véhicules de combat disponibles : {string.Join(", ", combatVehicles.Select(v => $"{v.defName} ({(Class(v) == VClass.Ifv ? TransportCost(v) : Cost(v)):F0} pts, {Class(v)}{(Role(v) == FireRole.Direct ? "" : " " + Role(v))})"))}");
             return combatVehicles.Cast<VehicleDef>().ToList();
         }
 
-        /// <summary>Coût en points : VVE ne renseigne pas combatPower (100 partout), on part de la valeur marchande.</summary>
-        public static float Cost(ThingDef v) => Mathf.Clamp(v.BaseMarketValue / 12f, 250f, 4000f) * HRSettings.CostFactor;
+        public const float MinVehicleCost = 400f;
 
-        /// <summary>Choisit les véhicules d'un raid. Retourne les defs et le coût total à retirer du budget de l'infanterie.</summary>
+        public enum FireRole { Direct, Artillery, RocketSwarm }
+
+        private static readonly Dictionary<ThingDef, FireRole> roles = new Dictionary<ThingDef, FireRole>();
+
+        /// <summary>
+        /// Coût en points : VVE ne renseigne pas combatPower (100 partout), on part de la valeur marchande, au même taux
+        /// que l'équipement des raiders, × un multiplicateur blindé (CE : les armes légères ne passent pas). Les roquettes
+        /// en essaim et l'artillerie tirent par-dessus les défenses (saturation anti-missile, frappe des soutes) : × en plus.
+        /// </summary>
+        public static float Cost(ThingDef v)
+        {
+            float baseCost = Mathf.Max(v.BaseMarketValue / Mathf.Max(1f, HRSettings.ValueDivisor) * HRSettings.VehicleValueFactor, MinVehicleCost);
+            return baseCost * RoleFactor(Role(v)) * HRSettings.CostFactor;
+        }
+
+        public static float RoleFactor(FireRole r) => r switch
+        {
+            FireRole.RocketSwarm => HRSettings.RocketVehicleFactor,
+            FireRole.Artillery => HRSettings.ArtilleryVehicleFactor,
+            _ => 1f,
+        };
+
+        /// <summary>Rôle de tir le plus dangereux parmi les tourelles du véhicule.</summary>
+        public static FireRole Role(ThingDef v)
+        {
+            if (roles.TryGetValue(v, out FireRole cached)) return cached;
+            FireRole best = FireRole.Direct;
+            CompProperties_VehicleTurrets props = v.GetCompProperties<CompProperties_VehicleTurrets>();
+            if (props?.turrets != null)
+                foreach (VehicleTurret t in props.turrets)
+                {
+                    FireRole r = TurretRole(t?.def);
+                    if (r > best) best = r;
+                }
+            roles[v] = best;
+            return best;
+        }
+
+        private static FireRole TurretRole(VehicleTurretDef td)
+        {
+            if (td == null) return FireRole.Direct;
+            var projectiles = new List<ThingDef>();
+            if (td.projectile != null) projectiles.Add(td.projectile);
+            if (td.ammunition != null)
+                foreach (ThingDef a in td.ammunition.AllowedThingDefs)
+                    if (a.projectileWhenLoaded != null) projectiles.Add(a.projectileWhenLoaded);
+            string name = (td.defName + " " + td.label).ToLowerInvariant();
+            bool rocket = name.Contains("rocket") || name.Contains("swarm") || name.Contains("missile")
+                          || projectiles.Any(p => p.defName.IndexOf("Rocket", StringComparison.OrdinalIgnoreCase) >= 0
+                                                  || p.defName.IndexOf("Missile", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (rocket) return FireRole.RocketSwarm;
+            bool indirect = name.Contains("artillery") || name.Contains("mortar")
+                            || projectiles.Any(p => p.projectile?.flyOverhead ?? false);
+            return indirect ? FireRole.Artillery : FireRole.Direct;
+        }
+
+        // ------------------------------------------------------------ classes et composition
+        public enum VClass { Light, Tank, FireSupport, Ifv }
+
+        private static readonly Dictionary<ThingDef, VClass> classes = new Dictionary<ThingDef, VClass>();
+
+        /// <summary>
+        /// Appui-feu : roquettes / artillerie. IFV : ≥ 3 places passagers et tir direct (compté comme transport).
+        /// Tank : canon à obus explosifs. Léger : le reste (minigun, lance-flammes).
+        /// </summary>
+        public static VClass Class(ThingDef v)
+        {
+            if (classes.TryGetValue(v, out VClass c)) return c;
+            if (Role(v) != FireRole.Direct) c = VClass.FireSupport;
+            else if (v is VehicleDef vd && Seats(vd, true) >= 3) c = VClass.Ifv;
+            else if (HasCannon(v)) c = VClass.Tank;
+            else c = VClass.Light;
+            classes[v] = c;
+            return c;
+        }
+
+        private static bool HasCannon(ThingDef v)
+        {
+            CompProperties_VehicleTurrets props = v.GetCompProperties<CompProperties_VehicleTurrets>();
+            if (props?.turrets == null) return false;
+            foreach (VehicleTurret t in props.turrets)
+            {
+                VehicleTurretDef td = t?.def;
+                if (td == null) continue;
+                if ((td.defName + " " + td.label).ToLowerInvariant().Contains("cannon")) return true;
+                var projectiles = new List<ThingDef>();
+                if (td.projectile != null) projectiles.Add(td.projectile);
+                if (td.ammunition != null)
+                    foreach (ThingDef a in td.ammunition.AllowedThingDefs)
+                        if (a.projectileWhenLoaded != null) projectiles.Add(a.projectileWhenLoaded);
+                if (projectiles.Any(p => (p.projectile?.explosionRadius ?? 0f) > 0.5f || (p.label ?? "").Contains("shell"))) return true;
+            }
+            return false;
+        }
+
+        private static int StochasticRound(float x, System.Random rng)
+        {
+            int n = Mathf.FloorToInt(x);
+            return n + (rng.NextDouble() < x - n ? 1 : 0);
+        }
+
+        private static VehicleDef WeightedPick(List<VehicleDef> cands, Func<VehicleDef, float> weight, System.Random rng)
+        {
+            if (cands.Count == 0) return null;
+            float total = cands.Sum(weight);
+            double r = rng.NextDouble() * total;
+            foreach (VehicleDef v in cands)
+            {
+                r -= weight(v);
+                if (r <= 0) return v;
+            }
+            return cands[cands.Count - 1];
+        }
+
+        /// <summary>
+        /// Choisit les blindés d'un raid (hors transports) : 1 tank pour 3 à 6 véhicules (selon son prix), 1 appui-feu
+        /// pour 3 tanks, le reste en véhicules légers. Achat dans l'ordre appui-feu → tanks → légers, chacun en gardant
+        /// de quoi payer le prix plancher des véhicules restants. Retourne les defs et le coût total.
+        /// </summary>
         public static List<ThingDef> Plan(Faction faction, float points, float tierX, System.Random rng, out float totalCost)
         {
             totalCost = 0f;
             var res = new List<ThingDef>();
             if (tierX < HRSettings.VehicleMinTier) return res;
-            List<VehicleDef> cands = Catalog().Where(v => v.techLevel <= faction.def.techLevel || v.techLevel == TechLevel.Undefined).ToList();
+            List<VehicleDef> cands = Catalog().Where(v => (v.techLevel <= faction.def.techLevel || v.techLevel == TechLevel.Undefined)
+                                                          && Class(v) != VClass.Ifv).ToList();
             if (cands.Count == 0) return res;
+            List<VehicleDef> fire = cands.Where(v => Class(v) == VClass.FireSupport).ToList();
+            List<VehicleDef> tanks = cands.Where(v => Class(v) == VClass.Tank).ToList();
+            List<VehicleDef> lights = cands.Where(v => Class(v) == VClass.Light).ToList();
+            if (lights.Count == 0) lights = tanks;
 
             float budget = points * HRSettings.VehiclePointShare;
             int wanted = Mathf.Clamp(Mathf.RoundToInt(tierX - HRSettings.VehicleMinTier + 1f + points / 25000f), 1, HRSettings.MaxVehicles);
             // plus le palier est haut, plus on préfère les gros blindés
             float exp = Mathf.Lerp(0f, 1.5f, Mathf.InverseLerp(HRSettings.VehicleMinTier, 6f, tierX));
-            for (int i = 0; i < wanted; i++)
+            float minCost = cands.Min(v => Cost(v));
+            int left = wanted;
+
+            bool Buy(List<VehicleDef> pool)
             {
-                float perVehicle = budget / (wanted - i);
-                List<VehicleDef> afford = cands.Where(v => Cost(v) <= perVehicle).ToList();
-                if (afford.Count == 0) break;
-                float total = afford.Sum(v => Mathf.Pow(Cost(v), exp));
-                double r = rng.NextDouble() * total;
-                VehicleDef pick = afford[afford.Count - 1];
-                foreach (VehicleDef v in afford)
-                {
-                    r -= Mathf.Pow(Cost(v), exp);
-                    if (r <= 0) { pick = v; break; }
-                }
+                float cap = budget - (left - 1) * minCost;
+                VehicleDef pick = WeightedPick(pool.Where(v => Cost(v) <= cap).ToList(), v => Mathf.Pow(Cost(v), exp), rng);
+                if (pick == null) return false;
                 res.Add(pick);
                 budget -= Cost(pick);
-                totalCost += Cost(pick);
+                left--;
+                return true;
+            }
+
+            // nombre de tanks : l'intervalle (3 à 6 véhicules par tank) dépend du prix du tank qu'on achèterait
+            int nTanks = 0, nFire = 0;
+            if (tanks.Count > 0)
+            {
+                float lo = tanks.Min(v => Cost(v)), hi = tanks.Max(v => Cost(v));
+                VehicleDef typical = WeightedPick(tanks, v => Mathf.Pow(Cost(v), exp), rng);
+                float interval = Mathf.Lerp(3f, 6f, hi > lo ? Mathf.InverseLerp(lo, hi, Cost(typical)) : 0f);
+                nTanks = Mathf.Min(StochasticRound(wanted / interval, rng), wanted);
+                nFire = Mathf.Min(StochasticRound(nTanks / 3f, rng), wanted - nTanks);
+            }
+            for (int i = 0; i < nFire && left > 0; i++) if (!Buy(fire)) break;
+            for (int i = 0; i < nTanks && left > 0; i++) if (!Buy(tanks)) break;
+            while (left > 0) if (!Buy(lights) && !Buy(tanks)) break;
+            totalCost = res.Sum(v => Cost(v));
+            return res;
+        }
+
+        // ------------------------------------------------------------ transports (payants, moins chers que les blindés)
+        /// <summary>Prix d'un transport : camion = valeur ÷ taux × facteur transport ; IFV = prix d'un blindé.</summary>
+        public static float TransportCost(ThingDef v) =>
+            Class(v) == VClass.Ifv ? Cost(v)
+                : Mathf.Max(v.BaseMarketValue / Mathf.Max(1f, HRSettings.ValueDivisor) * HRSettings.TransportValueFactor, 20f) * HRSettings.CostFactor;
+
+        private static int TransportSeats(VehicleDef v) => Class(v) == VClass.Ifv ? Seats(v, true) : Seats(v, false);
+
+        /// <summary>Places pour l'infanterie dans les blindés déjà choisis (équipage compris).</summary>
+        public static int SeatsIn(IEnumerable<ThingDef> defs) => defs.OfType<VehicleDef>().Sum(v => Seats(v, false));
+
+        /// <summary>
+        /// Transports pour l'infanterie restante, un seul modèle par raid. Le prix par place visé monte avec le palier :
+        /// vagues pauvres → voitures, milieu → camions, fin de partie → IFV. Ce qui ne rentre pas dans le budget marche.
+        /// </summary>
+        public static List<ThingDef> PlanTransports(Faction faction, float points, float tierX, int seatsNeeded, System.Random rng, out float totalCost)
+        {
+            totalCost = 0f;
+            var res = new List<ThingDef>();
+            if (tierX < HRSettings.VehicleMinTier || seatsNeeded <= 0 || HRSettings.MaxTransports <= 0) return res;
+            List<VehicleDef> cands = TransportCatalog()
+                .Concat(Catalog().Where(v => Class(v) == VClass.Ifv))
+                .Where(v => (v.techLevel <= faction.def.techLevel || v.techLevel == TechLevel.Undefined) && TransportSeats(v) > 0)
+                .Distinct().ToList();
+            if (cands.Count == 0) return res;
+
+            float budget = points * HRSettings.TransportPointShare;
+            int Count(VehicleDef v) => Mathf.Min(Mathf.CeilToInt(seatsNeeded / (float)TransportSeats(v)), HRSettings.MaxTransports);
+            float PerSeat(VehicleDef v) => TransportCost(v) / TransportSeats(v);
+            // exposant sur le prix par place : bas palier → favorise les moins chers, haut palier → les plus chers
+            float exp = Mathf.Lerp(-2f, 2f, Mathf.InverseLerp(HRSettings.VehicleMinTier, 6f, tierX));
+            List<VehicleDef> full = cands.Where(v => Count(v) * TransportCost(v) <= budget).ToList();
+            VehicleDef pick = full.Count > 0
+                ? WeightedPick(full, v => Mathf.Pow(PerSeat(v), exp), rng)
+                : cands.OrderBy(PerSeat).First();   // rien ne couvre tout le monde : le moins cher par place, autant que possible
+            int n = Mathf.Min(Count(pick), Mathf.FloorToInt(budget / TransportCost(pick)));
+            for (int i = 0; i < n; i++)
+            {
+                res.Add(pick);
+                totalCost += TransportCost(pick);
             }
             return res;
         }
+
+        public static bool IsTruck(ThingDef v) => v is VehicleDef vd && (vd.vehicleCategory & VehicleCategory.Combat) == 0;
 
         public static bool IsVehicle(Pawn p) => p is VehiclePawn;
 
@@ -370,14 +549,14 @@ namespace HardenedRaids
                                 && (v.enabled & VehicleEnabled.For.Raiders) != 0 && Seats(v, false) >= 3
                                 && v.properties.roles.Any(r => (r.HandlingTypes & HandlingType.Movement) != 0))
                     .Cast<ThingDef>().ToList();
-                HRLog.Msg($"transports de troupes disponibles : {string.Join(", ", transports.Select(v => $"{v.defName} ({Seats((VehicleDef)v, false)} places)"))}");
+                HRLog.Msg($"transports de troupes disponibles : {string.Join(", ", transports.Select(v => $"{v.defName} ({Seats((VehicleDef)v, false)} places, {TransportCost(v):F0} pts)"))}");
             }
             return transports.Cast<VehicleDef>().ToList();
         }
 
         /// <summary>
-        /// Convoi : blindés achetés (pilote + tireurs restent, passagers débarquent) puis assez de camions pour
-        /// embarquer tout le reste de l'infanterie (tous débarquent). Les embarqués restent membres du lord
+        /// Convoi : blindés et IFV achetés (pilote + tireurs restent, passagers débarquent) puis les camions achetés
+        /// au plan pour le reste de l'infanterie (tous débarquent ; ce qui ne rentre pas marche). Les embarqués restent membres du lord
         /// d'infanterie du raid (voir Patch_VehicleLord).
         /// </summary>
         public static void SpawnVehicles(List<ThingDef> defs, IncidentParms parms, List<Pawn> pawns)
@@ -419,10 +598,10 @@ namespace HardenedRaids
                 return true;
             }
 
-            // 1. blindés
+            // 1. blindés et IFV (équipage reste à bord, passagers débarquent)
             foreach (ThingDef d in defs)
             {
-                if (d is not VehicleDef vd) continue;
+                if (d is not VehicleDef vd || IsTruck(vd)) continue;
                 VehiclePawn v = null;
                 try
                 {
@@ -447,22 +626,14 @@ namespace HardenedRaids
                     if (v != null && !v.Destroyed && !vehicles.Contains(v)) v.Destroy();
                 }
             }
-            if (vehicles.Count == 0) { HRLog.Msg($"0/{defs.Count} véhicule(s) pour {parms.faction.Name}."); return; }
-
-            // 2. camions pour tout le reste
-            List<VehicleDef> trucks = TransportCatalog().Where(v => v.techLevel <= parms.faction.def.techLevel || v.techLevel == TechLevel.Undefined).ToList();
-            // gros raid : le plus gros camion (Wisent...) ; petit raid : le plus petit qui embarque tout le monde
-            VehicleDef truckDef = null;
-            if (trucks.Count > 0)
-            {
-                int biggest = trucks.Max(v => Seats(v, false));
-                truckDef = pool.Count > biggest
-                    ? trucks.Where(v => Seats(v, false) == biggest).RandomElement()
-                    : trucks.Where(v => Seats(v, false) >= pool.Count).OrderBy(v => Seats(v, false)).First();
-            }
+            // 2. camions achetés au plan (tout le monde débarque) ; ceux qui restent vides ne viennent pas
+            List<VehicleDef> trucks = defs.OfType<VehicleDef>().Where(IsTruck).ToList();
+            VehicleDef truckDef = trucks.FirstOrDefault();
             int nTrucks = 0;
-            while (truckDef != null && pool.Count > 0 && nTrucks < HRSettings.MaxTransports)
+            foreach (VehicleDef td in trucks)
             {
+                if (pool.Count == 0 || nTrucks >= HRSettings.MaxTransports) break;
+                truckDef = td;
                 VehiclePawn t = null;
                 try
                 {
@@ -488,6 +659,7 @@ namespace HardenedRaids
                 }
             }
 
+            if (vehicles.Count == 0) { HRLog.Msg($"0/{defs.Count} véhicule(s) pour {parms.faction.Name}."); return; }
             foreach (VehiclePawn v in vehicles) { Supply(v); Ready(v); pawns.Add(v); }
             ConvoyHandoff.Pending = new ConvoyHandoff
             {
@@ -496,7 +668,7 @@ namespace HardenedRaids
                 deployTurrets = HRSettings.TruckTurrets && parms.raidStrategy != null && parms.raidStrategy.defName.Contains("Smart"),
                 tierX = Tiers.TierX(parms.faction.def, parms.points),
             };
-            HRLog.Msg($"convoi {parms.faction.Name} : {vehicles.Count - nTrucks} blindé(s), {nTrucks} camion(s) {(truckDef != null ? "(" + truckDef.label + ")" : "")}, "
+            HRLog.Msg($"convoi {parms.faction.Name} : {vehicles.Count - nTrucks} blindé(s), {nTrucks}/{trucks.Count} camion(s) {(truckDef != null ? "(" + truckDef.label + ")" : "")}, "
                       + $"{dismount.Count} fantassins embarqués, {pool.Count} à pied.");
         }
 

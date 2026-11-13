@@ -177,6 +177,29 @@ namespace HardenedRaids
             RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, needBreacher, rng);
             if (plan == null) return false;
 
+            // ---- transports (payants) pour l'infanterie qui ne monte pas dans les blindés ; on refait le plan avec le reste
+            if (vehicles != null)
+            {
+                try
+                {
+                    List<ThingDef> transports = VehicleCompat.PlanTransports(parms.faction, parms.points, tierX,
+                        plan.thisWave - VehicleCompat.SeatsIn(vehicles), rng, out float tCost);
+                    if (transports.Count > 0)
+                    {
+                        vehicles.AddRange(transports);
+                        if (wave == null)
+                        {
+                            infantryPoints = Mathf.Max(parms.points * 0.5f, infantryPoints - tCost);
+                            plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, needBreacher, rng) ?? plan;
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Log.Warning("[Hardened Raids] choix des transports : " + e.Message);
+                }
+            }
+
             // ---- choix des pawnkinds (on respecte les règles vanilla : chef unique, pawns requis par la stratégie, xénotypes)
             var chosen = new List<PawnGenOptionWithXenotype>();
             bool leaderChosen = false;

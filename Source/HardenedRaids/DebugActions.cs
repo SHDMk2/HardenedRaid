@@ -51,6 +51,8 @@ namespace HardenedRaids
                     if (plan != null && HRSettings.EnableVehicles && VehicleGate.Active && f.def.techLevel >= TechLevel.Industrial)
                     {
                         var v = VehicleCompat.Plan(f, p, plan.tierX, rng, out float cost);
+                        v.AddRange(VehicleCompat.PlanTransports(f, p, plan.tierX, plan.thisWave - VehicleCompat.SeatsIn(v), rng, out float tCost));
+                        cost += tCost;
                         if (v.Count > 0)
                             sb.AppendLine($"   [véhicules, si arrivée à pied] {string.Join(", ", v.Select(d => d.label))} ({cost:F0} pts retirés à l'infanterie)");
                     }

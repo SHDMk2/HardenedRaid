@@ -36,6 +36,11 @@ namespace HardenedRaids
         public static bool EnableVehicles = true;
         public static float VehiclePointShare = 0.25f; // part max des points dépensée en véhicules
         public static float VehicleMinTier = 3f;
+        public static float VehicleValueFactor = 5f;      // blindé : valeur ÷ taux $/pt × ce facteur
+        public static float RocketVehicleFactor = 10f;    // roquettes en essaim (Scytheman, Burya)
+        public static float ArtilleryVehicleFactor = 5f;  // artillerie (Udar)
+        public static float TransportPointShare = 0.10f;  // part max des points dépensée en transports (camions, IFV)
+        public static float TransportValueFactor = 1f;    // camion : valeur ÷ taux $/pt × ce facteur
         public static int MaxVehicles = 6;
         public static int MaxTransports = 20;
         public static bool TruckTurrets = true;          // raid smart : tourelles déchargées des camions
@@ -71,6 +76,11 @@ namespace HardenedRaids
             Scribe_Values.Look(ref EnableVehicles, "EnableVehicles", true);
             Scribe_Values.Look(ref VehiclePointShare, "VehiclePointShare", 0.25f);
             Scribe_Values.Look(ref VehicleMinTier, "VehicleMinTier", 3f);
+            Scribe_Values.Look(ref VehicleValueFactor, "VehicleValueFactor", 5f);
+            Scribe_Values.Look(ref RocketVehicleFactor, "RocketVehicleFactor", 10f);
+            Scribe_Values.Look(ref ArtilleryVehicleFactor, "ArtilleryVehicleFactor", 5f);
+            Scribe_Values.Look(ref TransportPointShare, "TransportPointShare", 0.10f);
+            Scribe_Values.Look(ref TransportValueFactor, "TransportValueFactor", 1f);
             Scribe_Values.Look(ref MaxVehicles, "MaxVehicles", 6);
             Scribe_Values.Look(ref MaxTransports, "MaxTransports", 20);
             Scribe_Values.Look(ref TruckTurrets, "TruckTurrets", true);
@@ -143,8 +153,18 @@ namespace HardenedRaids
                 "Les raiders industriels+ arrivant à pied par le bord de la carte peuvent amener des blindés VVE.");
             VehiclePointShare = Mathf.Round(l.SliderLabeled($"Part des points en véhicules : {VehiclePointShare:P0}", VehiclePointShare, 0.05f, 0.5f, 0.5f) * 20f) / 20f;
             VehicleMinTier = Mathf.Round(l.SliderLabeled($"Palier minimum pour les véhicules : {VehicleMinTier:F0}", VehicleMinTier, 1f, 6f, 0.5f));
+            VehicleValueFactor = Mathf.Round(l.SliderLabeled($"Prix des blindés : valeur ÷ {ValueDivisor:F0} × {VehicleValueFactor:F1}", VehicleValueFactor, 1f, 15f, 0.5f,
+                "Même taux $/pt que l'équipement des raiders, multiplié pour le blindage. Plancher 400 pts.") * 2f) / 2f;
+            RocketVehicleFactor = Mathf.Round(l.SliderLabeled($"Véhicules à roquettes en essaim : ×{RocketVehicleFactor:F0}", RocketVehicleFactor, 1f, 20f, 0.5f,
+                "Scytheman, Burya : tir par-dessus les défenses, saturation anti-missile."));
+            ArtilleryVehicleFactor = Mathf.Round(l.SliderLabeled($"Véhicules d'artillerie : ×{ArtilleryVehicleFactor:F0}", ArtilleryVehicleFactor, 1f, 20f, 0.5f,
+                "Udar : tir indirect par-dessus les murs."));
             MaxVehicles = (int)l.SliderLabeled($"Blindés max par vague : {MaxVehicles}", MaxVehicles, 1, 15, 0.5f);
-            MaxTransports = (int)l.SliderLabeled($"Camions de troupes max par vague : {MaxTransports}", MaxTransports, 0, 40, 0.5f);
+            TransportPointShare = Mathf.Round(l.SliderLabeled($"Part des points en transports : {TransportPointShare:P0}", TransportPointShare, 0f, 0.3f, 0.5f,
+                "Camions et IFV pour l'infanterie. Petits paliers : voitures bon marché ; fin de partie : IFV. Ce qui ne rentre pas marche.") * 20f) / 20f;
+            TransportValueFactor = Mathf.Round(l.SliderLabeled($"Prix des camions : valeur ÷ {ValueDivisor:F0} × {TransportValueFactor:F1}", TransportValueFactor, 0.5f, 5f, 0.5f,
+                "Les IFV (Tango, Badger, Paladin) sont au prix des blindés.") * 2f) / 2f;
+            MaxTransports = (int)l.SliderLabeled($"Transports max par vague : {MaxTransports}", MaxTransports, 0, 40, 0.5f);
             l.CheckboxLabeled("Raid smart : tourelles déchargées devant les camions", ref TruckTurrets);
             MaxTruckTurrets = (int)l.SliderLabeled($"Tourelles de camion max : {MaxTruckTurrets}", MaxTruckTurrets, 0, 10, 0.5f);
             l.GapLine();
