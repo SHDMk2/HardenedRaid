@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Reflection.Emit;
 using HarmonyLib;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -18,29 +20,98 @@ namespace HardenedRaids
 
         public static bool CanArriveManhunter(PawnKindDef k) =>
             k?.race != null && k.RaceProps.Animal && k.canArriveManhunter && k.RaceProps.CanPassFences;
+
+        /// <summary>GetAnimalsCount vanilla avec le plafond du mod.</summary>
+        public static int AnimalsCount(PawnKindDef animalKind, float points) =>
+            Mathf.Clamp(Mathf.RoundToInt(points / animalKind.combatPower), 2, MaxAnimals);
+
+        /// <summary>Remplace l'appel à SitePartWorker_Manhunters.GetAnimalsCount (privée, minuscule).</summary>
+        public static int SiteAnimalsCount(SitePartWorker_Manhunters worker, SitePartParams parms) =>
+            AnimalsCount(parms.animalKind, parms.threatPoints);
+
+        /// <summary>Poids d'une espèce : même formule que vanilla, mais 0 seulement au-delà du nouveau plafond.</summary>
+        public static float Weight(PawnKindDef animal, float points)
+        {
+            points = Mathf.Max(points, 70f);
+            if (animal.combatPower * 2f > points) return 0f;
+            int max = MaxAnimals;
+            int n = Mathf.Min(Mathf.RoundToInt(points / animal.combatPower), max);
+            return Mathf.Clamp01(Mathf.InverseLerp(max, 10f, n));
+        }
+
+        /// <summary>TryGetAnimalFromList vanilla, avec le poids du mod.</summary>
+        public static bool TryGetAnimalFromList(float points, List<PawnKindDef> animals, out PawnKindDef animalKind)
+        {
+            if (animals != null && animals.Count > 0)
+            {
+                if (animals.TryRandomElementByWeight(a => Weight(a, points), out animalKind)) return true;
+                if (points > animals.Min(a => a.combatPower) * 2f)
+                {
+                    animalKind = animals.MaxBy(a => a.combatPower);
+                    return true;
+                }
+            }
+            animalKind = null;
+            return false;
+        }
     }
 
+    // B6 : GetAnimalsCount (22 o d'IL) et AnimalWeight (78 o) sont inlinables par le JIT CoreCLR : un patch sur elles peut être
+    // contourné. On patche donc des méthodes trop grosses pour être inlinées (> 100 o) :
+    // - le choix d'espèce : TryGetAnimalFromList (141 o), seul appelant vanilla d'AnimalWeight (via sa lambda), utilisé par les
+    //   deux TryFindAggressiveAnimalKind (event, quête, site, embuscade de caravane, signal d'embuscade) ;
+    // - le nombre : appels à GetAnimalsCount remplacés dans GenerateAnimals (193 o), IncidentWorker_AggressiveAnimals,
+    //   QuestNode_ManhunterPack et les appelants publics de SitePartWorker_Manhunters.GetAnimalsCount (privée, 13 o).
+    // VEE ManhunterSingleArrival : une seule bête (GenerateAnimals avec animalCount = 1) et son propre choix d'espèce par
+    // AnimalWeight vanilla : volontairement non touché (une bête seule doit rester la plus forte espèce possible).
+
+    [HarmonyPatch(typeof(AggressiveAnimalIncidentUtility), "TryGetAnimalFromList")]
+    public static class Patch_AnimalFromList
+    {
+        public static bool Prefix(float points, List<PawnKindDef> animals, ref PawnKindDef animalKind, ref bool __result)
+        {
+            __result = AnimalCaps.TryGetAnimalFromList(points, animals, out animalKind);
+            return false;
+        }
+    }
+
+    [HarmonyPatch]
+    public static class Patch_AnimalsCountCallers
+    {
+        private static readonly MethodInfo VanillaCount = AccessTools.Method(typeof(AggressiveAnimalIncidentUtility), nameof(AggressiveAnimalIncidentUtility.GetAnimalsCount));
+        private static readonly MethodInfo SiteCount = AccessTools.Method(typeof(SitePartWorker_Manhunters), "GetAnimalsCount");
+        private static readonly MethodInfo MyCount = AccessTools.Method(typeof(AnimalCaps), nameof(AnimalCaps.AnimalsCount));
+        private static readonly MethodInfo MySiteCount = AccessTools.Method(typeof(AnimalCaps), nameof(AnimalCaps.SiteAnimalsCount));
+
+        public static IEnumerable<MethodBase> TargetMethods()
+        {
+            Type[] types = { typeof(AggressiveAnimalIncidentUtility), typeof(IncidentWorker_AggressiveAnimals),
+                             typeof(RimWorld.QuestGen.QuestNode_ManhunterPack), typeof(SitePartWorker_Manhunters) };
+            return CallSwap.Callers(VanillaCount, types).Concat(CallSwap.Callers(SiteCount, types))
+                .Where(m => m != SiteCount).Distinct();
+        }
+
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            foreach (CodeInstruction i in instructions)
+            {
+                if ((i.opcode == OpCodes.Call || i.opcode == OpCodes.Callvirt) && i.operand is MethodInfo mi)
+                {
+                    if (mi == VanillaCount) { i.opcode = OpCodes.Call; i.operand = MyCount; }
+                    else if (mi == SiteCount) { i.opcode = OpCodes.Call; i.operand = MySiteCount; }
+                }
+                yield return i;
+            }
+        }
+    }
+
+    /// <summary>Filet pour les appelants d'autres mods (sans effet si le JIT a inliné la méthode).</summary>
     [HarmonyPatch(typeof(AggressiveAnimalIncidentUtility), nameof(AggressiveAnimalIncidentUtility.GetAnimalsCount))]
     public static class Patch_AnimalsCount
     {
         public static bool Prefix(PawnKindDef animalKind, float points, ref int __result)
         {
-            __result = Mathf.Clamp(Mathf.RoundToInt(points / animalKind.combatPower), 2, AnimalCaps.MaxAnimals);
-            return false;
-        }
-    }
-
-    /// <summary>Poids d'une espèce : même formule que vanilla, mais 0 seulement au-delà du nouveau plafond.</summary>
-    [HarmonyPatch(typeof(AggressiveAnimalIncidentUtility), nameof(AggressiveAnimalIncidentUtility.AnimalWeight))]
-    public static class Patch_AnimalWeight
-    {
-        public static bool Prefix(PawnKindDef animal, float points, ref float __result)
-        {
-            points = Mathf.Max(points, 70f);
-            if (animal.combatPower * 2f > points) { __result = 0f; return false; }
-            int max = AnimalCaps.MaxAnimals;
-            int n = Mathf.Min(Mathf.RoundToInt(points / animal.combatPower), max);
-            __result = Mathf.Clamp01(Mathf.InverseLerp(max, 10f, n));
+            __result = AnimalCaps.AnimalsCount(animalKind, points);
             return false;
         }
     }
