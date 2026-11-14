@@ -107,16 +107,26 @@ namespace HardenedRaids
         public List<ThingDef> implants;
         public ThingDef brain;
         public System.Random rng;
+        public int depth;                  // profondeur de PawnGenerator.GeneratePawn à laquelle CE raider est généré
+        public Pawn freshPawn;             // dernier pawn neuf passé par GenerateInitialHediffs (sinon : pawn du monde rhabillé)
+        public List<ThingDef> installed;   // pièces réellement posées par nous (dotation, membres remplacés)
+        public List<ThingDef> required;    // pièces imposées par le pawnkind (techHediffsRequired) réellement posées, facturées
+        public bool requiredBreacher;      // exigé par la stratégie (brèche / sape) : arme destructrice
+        public bool sapperRaid;            // raid de sape : le sapeur doit savoir creuser (validateur vanilla)
     }
 
     public static class GenContext
     {
         public static Slot Current;
+        /// <summary>Profondeur d'imbrication de PawnGenerator.GeneratePawn (les proches générés pendant un raider sont plus profonds).</summary>
+        public static int Depth;
+        /// <summary>> 0 : génération de groupes non combattants (cadavres…) en cours, pas de génération Hardened.</summary>
+        public static int NonCombat;
 
         public static Slot For(Pawn p)
         {
             Slot s = Current;
-            if (s == null || p == null || p.kindDef != s.kind || p.Faction != s.faction) return null;
+            if (s == null || p == null || Depth != s.depth || p.kindDef != s.kind || p.Faction != s.faction) return null;
             return s;
         }
     }
@@ -138,6 +148,7 @@ namespace HardenedRaids
             // raids, mais aussi tout groupe hostile hors raid : quêtes (navette écrasée…), embuscades,
             // rançons de caravane, défenseurs de sites et de colonies, pourparlers ratés
             if (!HRSettings.EnableTiers) return false;
+            if (GenContext.NonCombat > 0) return false;   // cadavres d'une colonie abandonnée, d'un appel de détresse…
             Faction f = parms.faction;
             if (f == null || f.IsPlayer || !f.def.humanlikeFaction || !f.HostileTo(Faction.OfPlayer)) return false;
             if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return false;
@@ -157,7 +168,8 @@ namespace HardenedRaids
             bool inRaid = RaidContext.Parms != null;
             WaveEntry wave = inRaid ? RaidContext.PendingWave : null;
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out Func<PawnKindDef, bool> isRequired);
-            var rng = new System.Random(Rand.Int);
+            // graine du groupe si fournie (sites, colonies) : la génération réelle concorde avec l'aperçu
+            var rng = new System.Random(parms.seed ?? Rand.Int);
             float tierX = wave?.tierX ?? Tiers.TierX(parms.faction.def, parms.points);
             if (tierX < 1f) return false;
 
@@ -210,39 +222,12 @@ namespace HardenedRaids
                 }
             }
 
-            // ---- choix des pawnkinds (on respecte les règles vanilla : chef unique, pawns requis par la stratégie, xénotypes)
-            var chosen = new List<PawnGenOptionWithXenotype>();
-            bool leaderChosen = false;
-            for (int i = 0; i < plan.thisWave; i++)
-            {
-                List<PawnGenOptionWithXenotype> opts = PawnGroupMakerUtility.GetOptions(parms, parms.faction.def, groupMaker.options, parms.points, 1e9f, 1e9f, chosen, leaderChosen)
-                    .Where(o => o.Option.kind.isFighter && o.Option.kind.RaceProps.Humanlike).ToList();
-                if (!opts.TryRandomElementByWeight(o => o.SelectionWeight, out PawnGenOptionWithXenotype pick)) break;
-                chosen.Add(pick);
-                if (pick.Option.kind.factionLeader) leaderChosen = true;
-            }
-            if (chosen.Count == 0) return false;
-
-            // ---- répartition noyau / troupe et rôles
-            var slots = new List<Slot>();
-            List<PawnGenOptionWithXenotype> order = chosen.InRandomOrder().ToList();
-            // le chef va dans le noyau (ou la troupe s'il n'y a pas de noyau)
-            order = order.OrderByDescending(o => o.Option.kind.factionLeader).ToList();
-            int coreCount = plan.core?.count ?? 0;
-            for (int i = 0; i < order.Count; i++)
-            {
-                GroupPlan g = i < coreCount ? plan.core : plan.troop;
-                PawnKindDef kind = order[i].Option.kind;
-                TierDef[] ladder = Tiers.LadderFor(parms.faction.def);
-                int ti = kind.factionLeader ? Mathf.Min(g.tierIndex + 1, ladder.Length - 1) : g.tierIndex;
-                slots.Add(new Slot
-                {
-                    kind = kind, xenotype = order[i].Xenotype, faction = parms.faction,
-                    tierIndex = ti, tier = ladder[ti], loadout = g.loadout, role = Role.Main, rank = Rank.Soldier, rng = rng,
-                });
-            }
-            AssignRoles(slots.Where(s => s.loadout == plan.core?.loadout).ToList(), isRequired);
-            AssignRoles(slots.Where(s => s.loadout == plan.troop.loadout).ToList(), isRequired);
+            // ---- choix des pawnkinds et répartition noyau / troupe (commun avec l'aperçu GeneratePawnKindsExample)
+            List<Slot> slots = BuildSlots(parms, groupMaker, plan, plan.thisWave, rng);
+            if (slots.Count == 0) return false;
+            MarkRequiredBreachers(slots, parms, isRequired);
+            AssignRoles(slots.Where(s => s.loadout == plan.core?.loadout).ToList());
+            AssignRoles(slots.Where(s => s.loadout == plan.troop.loadout).ToList());
 
             // ---- grades (chef d'abord, puis noyau) : 1 officier / 100, 1 sous-officier / 10 ; implants tirés ici pour le prix
             int nOff = Pricing.OfficerCount(slots.Count), nNco = Pricing.NcoCount(slots.Count);
@@ -253,7 +238,6 @@ namespace HardenedRaids
                 s.rank = i < nOff ? Rank.Officer : i < nOff + nNco ? Rank.Nco : Rank.Soldier;
                 s.implants = Loadouts.PickImplants(parms.faction.def, s.tier, rng);
                 s.brain = Tiers.IsLowTech(parms.faction.def) ? null : Loadouts.PickCyberbrain(s.tier.cyberbrainRank);
-                spent += Pricing.SlotPrice(s);
             }
 
             // ---- vagues suivantes
@@ -264,10 +248,12 @@ namespace HardenedRaids
             bool allowFood = parms.raidStrategy == null || parms.raidStrategy.pawnsCanBringFood || (parms.faction != null && !parms.faction.HostileTo(Faction.OfPlayer));
             Predicate<Pawn> validator = parms.raidStrategy != null ? (Pawn p) => parms.raidStrategy.Worker.CanUsePawn(parms.points, p, outPawns) : null;
             bool downedDone = false;
-            foreach (Slot s in slots)
+            // les pawns exigés par la stratégie d'abord : le validateur de sape veut un sapeur en premier
+            foreach (Slot s in slots.OrderByDescending(x => x.requiredBreacher).ToList())
             {
                 Pawn pawn = GenerateOne(s, parms, allowFood, validator);
                 if (pawn == null) continue;
+                spent += Pricing.SlotPrice(s, pawn);   // ce qui a réellement été posé
                 if (parms.forceOneDowned && !downedDone)
                 {
                     pawn.health.forceDowned = true;
@@ -285,20 +271,107 @@ namespace HardenedRaids
             return outPawns.Count > 0;
         }
 
-        private static void AssignRoles(List<Slot> group, Func<PawnKindDef, bool> isRequired)
+        /// <summary>
+        /// Choix des pawnkinds (règles vanilla : chef unique, pawns requis par la stratégie, xénotypes) et répartition noyau / troupe.
+        /// Avec parms.seed, le tirage Verse est fait sous cette graine, comme ChoosePawnGenOptionsByPoints.
+        /// </summary>
+        private static List<Slot> BuildSlots(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, RaidPlan plan, int count, System.Random rng)
+        {
+            var slots = new List<Slot>();
+            var chosen = new List<PawnGenOptionWithXenotype>();
+            List<PawnGenOptionWithXenotype> order;
+            if (parms.seed.HasValue) Rand.PushState(parms.seed.Value);
+            try
+            {
+                bool leaderChosen = false;
+                for (int i = 0; i < count; i++)
+                {
+                    List<PawnGenOptionWithXenotype> opts = PawnGroupMakerUtility.GetOptions(parms, parms.faction.def, groupMaker.options, parms.points, 1e9f, 1e9f, chosen, leaderChosen)
+                        .Where(o => o.Option.kind.isFighter && o.Option.kind.RaceProps.Humanlike).ToList();
+                    if (!opts.TryRandomElementByWeight(o => o.SelectionWeight, out PawnGenOptionWithXenotype pick)) break;
+                    chosen.Add(pick);
+                    if (pick.Option.kind.factionLeader) leaderChosen = true;
+                }
+                // le chef va dans le noyau (ou la troupe s'il n'y a pas de noyau)
+                order = chosen.InRandomOrder().ToList().OrderByDescending(o => o.Option.kind.factionLeader).ToList();
+            }
+            finally
+            {
+                if (parms.seed.HasValue) Rand.PopState();
+            }
+            int coreCount = plan.core?.count ?? 0;
+            TierDef[] ladder = Tiers.LadderFor(parms.faction.def);
+            for (int i = 0; i < order.Count; i++)
+            {
+                GroupPlan g = i < coreCount ? plan.core : plan.troop;
+                PawnKindDef kind = order[i].Option.kind;
+                int ti = kind.factionLeader ? Mathf.Min(g.tierIndex + 1, ladder.Length - 1) : g.tierIndex;
+                slots.Add(new Slot
+                {
+                    kind = kind, xenotype = order[i].Xenotype, faction = parms.faction,
+                    tierIndex = ti, tier = ladder[ti], loadout = g.loadout, role = Role.Main, rank = Rank.Soldier, rng = rng,
+                });
+            }
+            return slots;
+        }
+
+        /// <summary>
+        /// Aperçu (PawnGroupKindWorker_Normal.GeneratePawnKindsExample : effectif d'un avant-poste, pawnkinds annoncés d'un raid
+        /// de quête…) : même planification que la génération réelle, sans générer de pawn. null = laisser vanilla.
+        /// Aperçu d'un raid (stratégie connue) : toutes les vagues ; véhicules non connus à ce stade.
+        /// </summary>
+        public static List<PawnKindDef> ExampleKinds(PawnGroupMakerParms parms, PawnGroupMaker groupMaker)
+        {
+            float tierX = Tiers.TierX(parms.faction.def, parms.points);
+            if (tierX < 1f) return null;
+            var rng = new System.Random(parms.seed ?? Rand.Int);
+            bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out _);
+            bool raid = parms.raidStrategy != null && parms.groupKind == PawnGroupKindDefOf.Combat;
+            RaidPlan plan = RaidPlan.Make(parms.faction.def, parms.points, tierX, null, needBreacher, rng, allowWaves: raid);
+            if (plan == null) return null;
+            List<Slot> slots = BuildSlots(parms, groupMaker, plan, raid ? plan.total : plan.thisWave, rng);
+            if (slots.Count == 0) return null;
+            return slots.Select(x => x.kind).ToList();
+        }
+
+        private static readonly System.Reflection.MethodInfo minRequired =
+            HarmonyLib.AccessTools.Method(typeof(RaidStrategyWorker_WithRequiredPawnKinds), "MinRequiredPawnsForPoints");
+
+        /// <summary>Nombre de pawns exigés par la stratégie, comme vanilla (sape : 1 ; brèche : 1 à 4 selon les points).</summary>
+        private static int RequiredCount(PawnGroupMakerParms parms)
+        {
+            if (parms.raidStrategy?.Worker is not RaidStrategyWorker_WithRequiredPawnKinds w) return 0;
+            try { return minRequired != null ? (int)minRequired.Invoke(w, new object[] { parms.points, parms.faction }) : 1; }
+            catch { return 1; }
+        }
+
+        /// <summary>
+        /// Brèche / sape : seul le nombre de pawns exigé par vanilla (MinRequiredPawnsForPoints) reçoit d'office l'arme destructrice ;
+        /// la part de brèche normale du palier s'y ajoute ensuite (AssignRoles). Le chef n'est pris qu'en dernier recours.
+        /// </summary>
+        private static void MarkRequiredBreachers(List<Slot> slots, PawnGroupMakerParms parms, Func<PawnKindDef, bool> isRequired)
+        {
+            if (isRequired == null) return;
+            bool sappers = parms.raidStrategy?.Worker is RaidStrategyWorker_ImmediateAttackSappers;
+            foreach (Slot s in slots) s.sapperRaid = sappers;
+            int n = RequiredCount(parms);
+            foreach (Slot s in slots.Where(s => isRequired(s.kind)).OrderBy(s => s.kind.factionLeader).Take(Mathf.Max(0, n)))
+            {
+                s.role = Role.Breacher;
+                s.requiredBreacher = true;
+            }
+        }
+
+        private static void AssignRoles(List<Slot> group)
         {
             if (group.Count == 0) return;
             TierDef t = group[0].tier;
-            // les pawns exigés par une stratégie de brèche/sape portent une arme destructrice
-            if (isRequired != null)
-                foreach (Slot s in group.Where(s => isRequired(s.kind))) s.role = Role.Breacher;
-
             void Fill(Role r, float share)
             {
                 if (share <= 0f) return;
                 int n = Mathf.RoundToInt(group.Count * share);
                 if (n == 0 && group.Count >= 6) n = 1;
-                n -= group.Count(s => s.role == r);
+                n -= group.Count(s => s.role == r && !s.requiredBreacher);   // les exigés par la stratégie sont en plus
                 foreach (Slot s in group.Where(s => s.role == Role.Main && !s.kind.factionLeader).Take(Mathf.Max(0, n))) s.role = r;
             }
             Fill(Role.Breacher, t.breacherShare);
@@ -329,6 +402,8 @@ namespace HardenedRaids
             if (!Find.Storyteller.difficulty.ChildRaidersAllowed) request.AllowedDevelopmentalStages = DevelopmentalStage.Adult;
 
             Pawn pawn;
+            s.freshPawn = null; s.installed = null; s.required = null;
+            s.depth = GenContext.Depth + 1;   // GeneratePawn incrémente la profondeur : les proches générés dedans sont à +2
             GenContext.Current = s;
             try
             {
@@ -341,6 +416,8 @@ namespace HardenedRaids
             if (pawn == null) return null;
             try
             {
+                // pawn du monde réutilisé par vanilla (RedressPawn) : implants du slot, membres manquants remplacés, santé gardée
+                if (s.tier.healthy && pawn != s.freshPawn) PawnTuning.FitRedressed(pawn, s);
                 PawnTuning.ApplySkills(pawn, s);
                 PawnTuning.Mark(pawn, s.tierIndex);
                 PawnTuning.ApplyHarshDeath(pawn, s);

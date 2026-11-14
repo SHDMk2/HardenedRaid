@@ -85,9 +85,12 @@ namespace HardenedRaids
         public static void Postfix(Pawn pawn)
         {
             Slot s = GenContext.For(pawn);
-            if (s == null || !s.tier.healthy) return;
+            if (s == null) return;
+            s.freshPawn = pawn;   // pawn neuf (un pawn du monde rhabillé ne passe jamais ici)
+            if (!s.tier.healthy) return;
             try
             {
+                s.installed = null;
                 PawnTuning.CleanHealth(pawn);
                 PawnTuning.InstallImplants(pawn, s);
             }
@@ -102,14 +105,14 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(PawnApparelGenerator), nameof(PawnApparelGenerator.GenerateStartingApparelFor))]
     public static class Patch_GenerateApparel
     {
-        public static bool Prefix(Pawn pawn)
+        public static bool Prefix(Pawn pawn, PawnGenerationRequest request)
         {
             Slot s = GenContext.For(pawn);
             if (s == null || !s.tier.healthy) return true;
             if (!pawn.RaceProps.ToolUser || !pawn.RaceProps.IsFlesh) return true;
             try
             {
-                return !PawnTuning.WearLoadout(pawn, s);
+                return !PawnTuning.WearLoadout(pawn, s, request);
             }
             catch (Exception e)
             {
@@ -146,6 +149,7 @@ namespace HardenedRaids
             Slot s = GenContext.For(pawn);
             if (s == null || !s.tier.healthy) return;
             CECompat.EnsureAmmo(pawn);
+            if (s.sapperRaid) PawnTuning.EnsureSapperSkill(pawn, s);
             try { PawnTuning.DropBlockingApparel(pawn); }
             catch (Exception e) { Log.Warning("[Hardened Raids] shield/weapon check of " + pawn + " : " + e.Message); }
         }

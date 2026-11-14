@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -41,13 +42,127 @@ namespace HardenedRaids
         public static void InstallImplants(Pawn pawn, Slot s)
         {
             if (installPart == null) return;
-            // implants et cyberbrain tirés à la planification (ils entrent dans le prix du raider)
+            // implants et cyberbrain tirés à la planification ; seuls ceux réellement posés sont facturés (Slot.installed)
+            s.installed ??= new List<ThingDef>();
             var parts = new List<ThingDef>(s.implants ?? new List<ThingDef>());
             if (s.brain != null) parts.Add(s.brain);
-            foreach (ThingDef d in parts) InstallPart(pawn, d);
-            SkipAdaptation(pawn, parts);
+            foreach (ThingDef d in parts) if (InstallPart(pawn, d)) s.installed.Add(d);
+            SkipAdaptation(pawn, s.installed);
         }
 
+        /// <summary>
+        /// Pawn du monde rhabillé par vanilla (PawnGenerator.RedressPawn ne passe pas par GenerateInitialHediffs) : on garde sa
+        /// santé telle quelle (lésions, séquelles permanentes), on remplace seulement ses membres manquants par une prothèse du
+        /// palier quand c'est possible, puis on pose les implants et le cyberbrain du slot. L'âge n'est pas contraint.
+        /// </summary>
+        public static void FitRedressed(Pawn pawn, Slot s)
+        {
+            s.installed = new List<ThingDef>();
+            s.required = null;
+            ReplaceMissingLimbs(pawn, s);
+            InstallImplants(pawn, s);
+        }
+
+        private static readonly List<Thing> noIngredients = new List<Thing>();
+        private static List<KeyValuePair<ThingDef, List<RecipeDef>>> prostheses;
+
+        /// <summary>Pièces de remplacement (techHediffsTags) et leurs opérations « installer une partie artificielle ».</summary>
+        private static List<KeyValuePair<ThingDef, List<RecipeDef>>> Prostheses()
+        {
+            if (prostheses != null) return prostheses;
+            var byThing = new Dictionary<ThingDef, List<RecipeDef>>();
+            foreach (RecipeDef r in DefDatabase<RecipeDef>.AllDefsListForReading)
+            {
+                if (r.addsHediff == null || r.workerClass == null || !typeof(Recipe_InstallArtificialBodyPart).IsAssignableFrom(r.workerClass)) continue;
+                if (r.ingredients == null) continue;
+                foreach (IngredientCount ic in r.ingredients)
+                {
+                    if (ic.filter?.AllowedThingDefs == null) continue;
+                    foreach (ThingDef d in ic.filter.AllowedThingDefs)
+                    {
+                        if (!d.isTechHediff || d.techHediffsTags.NullOrEmpty() || !r.IsIngredient(d)) continue;
+                        if (!byThing.TryGetValue(d, out var l)) byThing[d] = l = new List<RecipeDef>();
+                        if (!l.Contains(r)) l.Add(r);
+                    }
+                }
+            }
+            prostheses = byThing.ToList();
+            return prostheses;
+        }
+
+        private static void ReplaceMissingLimbs(Pawn pawn, Slot s)
+        {
+            HediffSet hs = pawn.health.hediffSet;
+            BodyPartRecord brain = hs.GetBrain();
+            foreach (Hediff_MissingPart mp in hs.GetMissingPartsCommonAncestors().ToList())
+            {
+                BodyPartRecord part = mp.Part;
+                if (part == null || !hs.PartIsMissing(part) || hs.PartOrAnyAncestorHasDirectlyAddedParts(part)) continue;
+                // doigts et orteils : pas un membre, on ne remplace pas un bras entier pour un doigt
+                if (part.def.tags != null && (part.def.tags.Contains(BodyPartTagDefOf.ManipulationLimbDigit) || part.def.tags.Contains(BodyPartTagDefOf.MovingLimbDigit))) continue;
+                // de la partie manquante vers le haut (main manquante → bras bionique posé à l'épaule), sans toucher au torse ni au cerveau
+                BodyPartRecord target = part;
+                for (int up = 0; up < 3 && target != null && target.parent != null; up++, target = target.parent)
+                {
+                    if (brain != null && target != part && IsAncestorOrSelf(target, brain)) break;
+                    if (TryReplace(pawn, s, target)) break;
+                }
+            }
+        }
+
+        private static bool IsAncestorOrSelf(BodyPartRecord anc, BodyPartRecord p)
+        {
+            for (BodyPartRecord x = p; x != null; x = x.parent) if (x == anc) return true;
+            return false;
+        }
+
+        private static bool TryReplace(Pawn pawn, Slot s, BodyPartRecord target)
+        {
+            FactionTables t = Loadouts.TablesFor(s.faction.def);
+            ThingDef best = null, cheapest = null;
+            RecipeDef bestR = null, cheapestR = null;
+            foreach (KeyValuePair<ThingDef, List<RecipeDef>> kv in Prostheses())
+            {
+                ThingDef d = kv.Key;
+                if (!d.techHediffsTags.Any(t.implantTags.Contains)) continue;   // jamais hors des tables de la faction (low-tech : rien)
+                RecipeDef r = kv.Value.FirstOrDefault(x => pawn.def.AllRecipes.Contains(x) && x.Worker.GetPartsToApplyOn(pawn, x).Contains(target));
+                if (r == null) continue;
+                float v = d.BaseMarketValue;
+                if (v <= s.tier.implantBudget && (best == null || v > best.BaseMarketValue)) { best = d; bestR = r; }
+                if (cheapest == null || v < cheapest.BaseMarketValue) { cheapest = d; cheapestR = r; }
+            }
+            // la meilleure dans le budget d'implant du palier, sinon la moins chère (T1 : pas de budget d'implant)
+            ThingDef pick = best ?? cheapest;
+            RecipeDef rec = best != null ? bestR : cheapestR;
+            if (pick == null) return false;
+            try
+            {
+                rec.Worker.ApplyOnPawn(pawn, target, null, noIngredients, null);
+            }
+            catch (Exception e)
+            {
+                HRLog.Msg($"prothèse {pick.defName} impossible sur {pawn} : {e.Message}");
+                return false;
+            }
+            if (!pawn.health.hediffSet.HasDirectlyAddedPartFor(target)) return false;
+            s.installed.Add(pick);
+            HRLog.Msg($"{pawn.LabelShort} (pawn du monde rhabillé) : {target.Label} manquant(e) → {pick.label}.");
+            return true;
+        }
+
+        /// <summary>
+        /// Pièces imposées par le pawnkind (techHediffsRequired : bioniques de cataphracte, acidificateur…) à la place de
+        /// PawnTechHediffsGenerator.GenerateTechHediffsFor : les implants vanilla tirés au hasard ne sont pas posés sur un
+        /// raider Hardened (gratuits, et parfois sur des factions qui n'en ont pas dans la dotation) ; les imposés le sont et
+        /// sont facturés, sauf l'acidificateur (sans effet sur le prix, comme ApplyHarshDeath).
+        /// </summary>
+        public static void InstallRequiredTechHediffs(Pawn pawn, Slot s)
+        {
+            s.required = new List<ThingDef>();   // la boucle de GenerateInitialHediffs peut réinitialiser la santé et repasser ici
+            if (pawn.kindDef.techHediffsRequired == null) return;
+            foreach (ThingDef d in pawn.kindDef.techHediffsRequired)
+                if (InstallPart(pawn, d) && d.defName != "DeathAcidifier") s.required.Add(d);
+        }
         /// <summary>
         /// Pièces à phase d'adaptation (cyberbrains GiTS : stade « adapting » qui monte de 0,5/jour) : un raider arrive
         /// avec des implants posés depuis longtemps, on saute directement au dernier stade.
@@ -65,9 +180,11 @@ namespace HardenedRaids
             }
         }
 
-        private static void InstallPart(Pawn pawn, ThingDef d)
+        /// <returns>true si la pièce a réellement été posée</returns>
+        private static bool InstallPart(Pawn pawn, ThingDef d)
         {
-            if (installPart == null) return;
+            if (installPart == null) return false;
+            int before = CountFrom(pawn, d);
             try
             {
                 installPart.Invoke(null, new object[] { pawn, d });
@@ -75,7 +192,22 @@ namespace HardenedRaids
             catch (Exception e)
             {
                 HRLog.Msg($"implant {d.defName} impossible sur {pawn} : {e.InnerException?.Message ?? e.Message}");
+                return false;
             }
+            return CountFrom(pawn, d) > before;
+        }
+
+        /// <summary>Hediffs issus de cette pièce (pièce rendue au retrait, ou hediff d'un implant à usage direct).</summary>
+        private static int CountFrom(Pawn pawn, ThingDef d)
+        {
+            HediffDef direct = d.GetCompProperties<CompProperties_UseEffectInstallImplant>()?.hediffDef;
+            int n = 0;
+            foreach (Hediff h in pawn.health.hediffSet.hediffs)
+            {
+                if (h.def.spawnThingOnRemoved == d || (direct != null && h.def == direct))
+                    n += h is Hediff_Level lv ? lv.level : 1;
+            }
+            return n;
         }
 
         // ------------------------------------------------------------ armes de secours
@@ -145,6 +277,17 @@ namespace HardenedRaids
             Raise(pawn, other, Mathf.Max(0, s.tier.combatSkill.min - 4));
         }
 
+        /// <summary>
+        /// Raid de sape : le validateur vanilla (RaidStrategyWorker_ImmediateAttackSappers.CanUsePawn, après l'équipement) rejette
+        /// un pawnkind sapeur armé d'une arme destructrice qui creuse mal (minage &lt; 4) ; vanilla retire alors des pawns jusqu'à en
+        /// trouver un. On relève directement le minage au minimum requis (inutilisable si le skill est désactivé : vanilla retire).
+        /// </summary>
+        public static void EnsureSapperSkill(Pawn pawn, Slot s)
+        {
+            if (pawn.skills == null || !s.kind.canBeSapper) return;
+            Raise(pawn, SkillDefOf.Mining, 4);
+        }
+
         private static void Raise(Pawn pawn, SkillDef def, int level)
         {
             SkillRecord r = pawn.skills.GetSkill(def);
@@ -181,7 +324,7 @@ namespace HardenedRaids
         }
 
         /// <returns>false si rien n'a pu être porté (on laisse alors vanilla faire)</returns>
-        public static bool WearLoadout(Pawn pawn, Slot s)
+        public static bool WearLoadout(Pawn pawn, Slot s, PawnGenerationRequest request)
         {
             List<ThingStuffPair> set = s.loadout.ApparelFor(s.role);
             if (set.Count == 0) return false;
@@ -196,22 +339,89 @@ namespace HardenedRaids
                 pawn.apparel.Wear(ap, dropReplacedApparel: false);
                 worn++;
             }
-            if (worn > 0) AddWarmthIfNeeded(pawn, s);
-            return worn > 0;
+            if (worn == 0) return false;
+            AddWarmthIfNeeded(pawn, s, request);
+            AddVacuumResistanceIfNeeded(pawn, s, request);
+            return true;
         }
 
-        private static void AddWarmthIfNeeded(Pawn pawn, Slot s)
+        /// <summary>Case du monde de la génération, comme vanilla (PawnApparelGenerator) : celle de la requête, sinon une base du joueur.</summary>
+        private static PlanetTile GenerationTile(PawnGenerationRequest request)
         {
-            if (RaidContext.Parms?.target is not Map map) return;
-            float outdoor = map.mapTemperature.OutdoorTemp;
+            PlanetTile tile = request.Tile;
+            if (!tile.Valid && Find.AnyPlayerHomeMap != null) tile = Find.AnyPlayerHomeMap.Tile;
+            return tile;
+        }
+
+        /// <summary>
+        /// Température à affronter : carte du raid si elle existe (température réelle), sinon carte déjà générée sur la case,
+        /// sinon la case du monde (embuscade, site, quête…) : la plus froide entre la température actuelle et la moyenne
+        /// de ce douzième et du suivant (vanilla regarde aussi deux douzièmes).
+        /// </summary>
+        private static float? OutdoorTempFor(PawnGenerationRequest request)
+        {
+            if (RaidContext.Parms?.target is Map raidMap) return raidMap.mapTemperature.OutdoorTemp;
+            PlanetTile tile = GenerationTile(request);
+            if (!tile.Valid) return null;
+            Map map = Current.Game?.FindMap(tile);
+            if (map != null) return map.mapTemperature.OutdoorTemp;
+            Twelfth tw = GenLocalDate.Twelfth(tile);
+            float t = Mathf.Min(GenTemperature.AverageTemperatureAtTileForTwelfth(tile, tw),
+                                GenTemperature.AverageTemperatureAtTileForTwelfth(tile, tw.NextTwelfth()));
+            if (Find.World?.tileTemperatures != null) t = Mathf.Min(t, Find.World.tileTemperatures.GetOutdoorTemp(tile));
+            return t;
+        }
+
+        private static void AddWarmthIfNeeded(Pawn pawn, Slot s, PawnGenerationRequest request)
+        {
+            float? outdoor = OutdoorTempFor(request);
+            if (!outdoor.HasValue) return;
             float comfy = pawn.GetStatValue(StatDefOf.ComfyTemperatureMin);
-            float missing = comfy - outdoor;
+            float missing = comfy - outdoor.Value;
             if (missing <= 5f) return;
             ThingStuffPair? warm = Loadouts.BestWarmLayer(Loadouts.TablesFor(s.faction.def), pawn, missing);
             if (!warm.HasValue) return;
             var ap = (Apparel)ThingMaker.MakeThing(warm.Value.thing, warm.Value.stuff);
             FinishGear(ap, pawn, s);
             pawn.apparel.Wear(ap, dropReplacedApparel: false);
+        }
+
+        /// <summary>
+        /// Odyssey : sur une case dans le vide, vanilla ajoute gratuitement une tenue étanche (PawnApparelGenerator.NeedVacuumResistance
+        /// + AddFreeVacuumResistanceAsNeeded). Même règle ici : objets « canBeGeneratedToSatisfyVacuumResistance », qui remplacent
+        /// la pièce incompatible seulement s'ils apportent nettement plus de résistance (+0,15, comme vanilla), jusqu'à 0,9.
+        /// </summary>
+        private static void AddVacuumResistanceIfNeeded(Pawn pawn, Slot s, PawnGenerationRequest request)
+        {
+            if (!ModsConfig.OdysseyActive || StatDefOf.VacuumResistance == null) return;
+            PlanetTile tile = GenerationTile(request);
+            if (!tile.Valid || tile.Tile?.PrimaryBiome == null || !tile.Tile.PrimaryBiome.inVacuum || !pawn.ConcernedByVacuum) return;
+            for (int i = 0; i < 10; i++)
+            {
+                if (pawn.GetStatValue(StatDefOf.VacuumResistance) >= 0.9f) break;
+                ThingStuffPair? pick = Loadouts.VacuumCandidates(pawn).Where(p => VacuumGain(pawn, p) > 0.15f)
+                    .Cast<ThingStuffPair?>().RandomElementByWeightWithDefault(p => p.Value.Commonality / (p.Value.Price * p.Value.Price + 1f), 0f);
+                if (!pick.HasValue) break;
+                foreach (Apparel worn in pawn.apparel.WornApparel.ToList())
+                {
+                    if (ApparelUtility.CanWearTogether(worn.def, pick.Value.thing, pawn.RaceProps.body)) continue;
+                    pawn.apparel.Remove(worn);
+                    worn.Destroy();
+                }
+                var ap = (Apparel)ThingMaker.MakeThing(pick.Value.thing, pick.Value.stuff);
+                FinishGear(ap, pawn, s);
+                pawn.apparel.Wear(ap, dropReplacedApparel: false);
+            }
+        }
+
+        private static float VacuumGain(Pawn pawn, ThingStuffPair p)
+        {
+            if (pawn.apparel.WornApparel.Any(w => w.def == p.thing)) return 0f;
+            float lost = 0f;
+            foreach (Apparel w in pawn.apparel.WornApparel)
+                if (!ApparelUtility.CanWearTogether(w.def, p.thing, pawn.RaceProps.body))
+                    lost += w.def.equippedStatOffsets.GetStatOffsetFromList(StatDefOf.VacuumResistance);
+            return p.VacuumResistance - lost;
         }
 
         /// <summary>Retire ce qui empêche le raider d'utiliser son arme (bouclier + arme à deux mains, ceinture bouclier + fusil...).
