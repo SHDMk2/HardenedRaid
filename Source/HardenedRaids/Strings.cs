@@ -83,6 +83,8 @@ namespace HardenedRaids
             ["MaxTruckTurrets"] = "Max truck turrets: {0}",
 
             ["MsgWaves"] = "Hardened Raids: {0} attacks in {1} waves ({2} raiders in total). Next wave in {3}.",
+            // --- lot waves ---
+            ["MsgInfestationWaves"] = "Hardened Raids: infestation of {0} hives: {1} now, the rest will dig through in {2} more wave(s), {3} apart.",
             ["MsgSupportTeam"] = "A support team from {0} ({1} men) is setting up firing positions.",
             ["MsgTruckTurret"] = "{0} is unloading a {1} in front of its trucks.",
 
@@ -166,6 +168,8 @@ namespace HardenedRaids
             ["MaxTruckTurrets"] = "Tourelles de camion max : {0}",
 
             ["MsgWaves"] = "Hardened Raids : {0} attaque en {1} vagues ({2} raiders au total). Prochaine vague dans {3}.",
+            // --- lot waves ---
+            ["MsgInfestationWaves"] = "Hardened Raids : infestation de {0} ruches : {1} maintenant, les autres creuseront en {2} vague(s) de plus, à {3} d'intervalle.",
             ["MsgSupportTeam"] = "Une équipe d'appui de {0} ({1} hommes) installe des positions de tir.",
             ["MsgTruckTurret"] = "{0} décharge un(e) {1} devant ses camions.",
 

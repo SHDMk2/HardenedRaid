@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using RimWorld;
 using Verse;
@@ -10,33 +11,48 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(IncidentWorker_Raid), nameof(IncidentWorker_Raid.TryGenerateRaidInfo))]
     public static class Patch_TryGenerateRaidInfo
     {
-        public static void Prefix(IncidentParms parms, bool debugTest, out bool __state)
+        // pile de contextes : un raid déclenché pendant un autre a son propre cadre (Parms, points, vagues, véhicules…)
+        public static void Prefix(IncidentParms parms, bool debugTest, out RaidFrame __state)
         {
-            __state = RaidContext.Parms == null;      // raid imbriqué : on ne touche pas au contexte externe
-            if (!__state) return;
-            RaidContext.Parms = parms;
-            RaidContext.DebugTest = debugTest;
-            RaidContext.PreAdjustPoints = -1f;
-            RaidContext.PendingVehicles = null;
+            __state = RaidContext.Push(parms, debugTest);
         }
 
-        public static void Finalizer(bool __state)
+        // vagues suivantes : programmées seulement si le raid a réellement été généré (B12)
+        public static void Postfix(bool debugTest, bool __result, RaidFrame __state)
         {
-            if (!__state) return;
-            RaidContext.Parms = null;
-            RaidContext.DebugTest = false;
-            RaidContext.PreAdjustPoints = -1f;
-            RaidContext.PendingVehicles = null;
+            if (!__result || debugTest || __state == null) return;
+            try { WaveScheduler.Commit(__state); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] wave scheduling: " + e); }
+        }
+
+        public static void Finalizer(RaidFrame __state)
+        {
+            RaidContext.Pop(__state);
         }
     }
 
     [HarmonyPatch(typeof(IncidentWorker_Raid), nameof(IncidentWorker_Raid.AdjustedRaidPoints))]
     public static class Patch_AdjustedRaidPoints
     {
-        public static void Prefix(float points)
+        public static bool Prefix(float points, RaidStrategyDef raidStrategy, Faction faction, PawnGroupKindDef groupKind, ref float __result)
         {
-            if (RaidContext.Parms != null && RaidContext.PreAdjustPoints < 0f) RaidContext.PreAdjustPoints = points;
+            RaidFrame f = RaidContext.Current;
+            if (f?.Parms == null || f.PreAdjustPoints >= 0f) return true;
+            f.PreAdjustPoints = points;
+            // vague différée : ses points sont déjà ajustés (part exacte du raid d'origine, même si la stratégie a changé)
+            WaveEntry w = f.Wave;
+            if (w == null || w.adjustedPoints <= 0f) return true;
+            float min = raidStrategy?.Worker != null ? raidStrategy.Worker.MinimumPoints(faction, groupKind) * 1.05f : 0f;
+            __result = Math.Max(w.adjustedPoints, min);
+            return false;
         }
+    }
+
+    /// <summary>Vague différée : même restriction d'âge que le raid d'origine (pas de nouveau tirage).</summary>
+    [HarmonyPatch(typeof(IncidentWorker_RaidEnemy), nameof(IncidentWorker_RaidEnemy.ResolveRaidAgeRestriction))]
+    public static class Patch_WaveAgeRestriction
+    {
+        public static bool Prefix() => RaidContext.PendingWave?.raidParms == null;
     }
 
     // ---------------------------------------------------------------- génération du groupe
@@ -44,21 +60,39 @@ namespace HardenedRaids
         new[] { typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(List<Pawn>), typeof(bool) })]
     public static class Patch_GeneratePawns
     {
-        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns)
+        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns, out bool __state)
         {
-            if (!RaidGenerator.Applies(parms)) return true;
-            try
+            __state = false;
+            // groupe principal du raid en cours (le premier groupe de la faction du raid) : seul à pouvoir faire des vagues
+            RaidFrame frame = RaidContext.Current;
+            bool main = frame != null && frame.TryClaimMainGroup(parms);
+            if (RaidGenerator.Applies(parms))
             {
-                if (RaidGenerator.TryGenerate(parms, groupMaker, outPawns)) return false;
+                try
+                {
+                    if (RaidGenerator.TryGenerate(parms, groupMaker, outPawns)) return false;
+                }
+                catch (Exception e)
+                {
+                    Log.Error("[Hardened Raids] raid generation failed, falling back to vanilla: " + e);
+                    foreach (Pawn p in outPawns) if (!p.Destroyed) p.Destroy();
+                    outPawns.Clear();
+                    GenContext.Current = null;
+                }
+                // repli vanilla : rien de ce qui a été prévu (vagues, véhicules) ne vaut, mais le plafond par vague reste
+                if (main) frame.CancelPlanned();
+                __state = VanillaWaveCap.Arm(parms, main ? frame : null, Tiers.WaveCapFor(parms.faction.def));
+                return true;
             }
-            catch (Exception e)
-            {
-                Log.Error("[Hardened Raids] raid generation failed, falling back to vanilla: " + e);
-                foreach (Pawn p in outPawns) if (!p.Destroyed) p.Destroy();
-                outPawns.Clear();
-                GenContext.Current = null;
-            }
+            // non-humains hostiles d'un raid (mécanoïdes…) : plafond low-tech par vague, le reste en vagues (A12 / D5)
+            if (main && parms.faction != null && !parms.faction.def.humanlikeFaction && parms.faction.HostileTo(Faction.OfPlayer))
+                __state = VanillaWaveCap.Arm(parms, frame, VanillaWaveCap.NonHumanCap);
             return true;
+        }
+
+        public static void Finalizer(bool __state)
+        {
+            if (__state) VanillaWaveCap.Disarm();
         }
     }
 
@@ -71,7 +105,15 @@ namespace HardenedRaids
         {
             // raids et tout groupe mécanoïde hors raid (vaisseau écrasé, mécas endormis, quêtes…)
             if (parms?.groupKind != PawnGroupKindDefOf.Combat) return;
-            try { MechPricing.Apply(parms, groupMaker); }
+            // vague différée : plafond d'armure du raid entier, pas de ses seuls points (A5)
+            float gatePoints = RaidContext.PendingWave?.gatePoints ?? -1f;
+            try
+            {
+                if (gatePoints > 0f && parms.faction != null && !parms.faction.def.humanlikeFaction && groupMaker?.options != null
+                    && parms.faction == RaidContext.Parms?.faction)
+                    MechPricing.Apply(groupMaker.options.Select(o => o.kind), gatePoints);
+                else MechPricing.Apply(parms, groupMaker);
+            }
             catch (Exception e) { MechPricing.Restore(); Log.Warning("[Hardened Raids] mechanoid pricing: " + e.Message); }
         }
 

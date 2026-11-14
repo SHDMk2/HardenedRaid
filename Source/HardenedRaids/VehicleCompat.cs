@@ -160,7 +160,8 @@ namespace HardenedRaids
         /// 3 tanks, le reste en véhicules légers. Achat dans l'ordre appui-feu → tanks → légers, chacun en gardant
         /// de quoi payer le prix plancher des véhicules restants. Retourne les defs et le coût total.
         /// </summary>
-        public static List<ThingDef> Plan(Faction faction, float points, float tierX, int nTransports, System.Random rng, out float totalCost)
+        /// <param name="maxVehicles">plafond de blindés (0 = réglage par vague) ; un raid en N vagues passe N × le réglage.</param>
+        public static List<ThingDef> Plan(Faction faction, float points, float tierX, int nTransports, System.Random rng, out float totalCost, int maxVehicles = 0)
         {
             totalCost = 0f;
             var res = new List<ThingDef>();
@@ -174,7 +175,8 @@ namespace HardenedRaids
             if (lights.Count == 0) lights = tanks;
 
             float budget = points * HRSettings.VehiclePointShare;
-            int wanted = Mathf.Clamp(Mathf.RoundToInt(tierX - HRSettings.VehicleMinTier + 1f + points / 25000f), 1, HRSettings.MaxVehicles);
+            int wanted = Mathf.Clamp(Mathf.RoundToInt(tierX - HRSettings.VehicleMinTier + 1f + points / 25000f), 1,
+                                     maxVehicles > 0 ? maxVehicles : HRSettings.MaxVehicles);
             // plus le palier est haut, plus on préfère les gros blindés
             float exp = Mathf.Lerp(0f, 1.5f, Mathf.InverseLerp(HRSettings.VehicleMinTier, 6f, tierX));
             float minCost = cands.Min(v => Cost(v));
@@ -219,7 +221,8 @@ namespace HardenedRaids
         /// Transports pour l'infanterie restante, un seul modèle par raid. Le prix par place visé monte avec le palier :
         /// vagues pauvres → voitures, milieu → camions, fin de partie → IFV. Ce qui ne rentre pas dans le budget marche.
         /// </summary>
-        public static List<ThingDef> PlanTransports(Faction faction, float points, float tierX, int seatsNeeded, System.Random rng, out float totalCost)
+        /// <param name="maxTransports">plafond de transports (0 = réglage par vague) ; un raid en N vagues passe N × le réglage.</param>
+        public static List<ThingDef> PlanTransports(Faction faction, float points, float tierX, int seatsNeeded, System.Random rng, out float totalCost, int maxTransports = 0)
         {
             totalCost = 0f;
             var res = new List<ThingDef>();
@@ -231,7 +234,8 @@ namespace HardenedRaids
             if (cands.Count == 0) return res;
 
             float budget = points * HRSettings.TransportPointShare;
-            int Count(VehicleDef v) => Mathf.Min(Mathf.CeilToInt(seatsNeeded / (float)TransportSeats(v)), HRSettings.MaxTransports);
+            int maxT = maxTransports > 0 ? maxTransports : HRSettings.MaxTransports;
+            int Count(VehicleDef v) => Mathf.Min(Mathf.CeilToInt(seatsNeeded / (float)TransportSeats(v)), maxT);
             float PerSeat(VehicleDef v) => TransportCost(v) / TransportSeats(v);
             // exposant sur le prix par place : bas palier → favorise les moins chers, haut palier → les plus chers
             float exp = Mathf.Lerp(-2f, 2f, Mathf.InverseLerp(HRSettings.VehicleMinTier, 6f, tierX));
@@ -245,6 +249,38 @@ namespace HardenedRaids
                 res.Add(pick);
                 totalCost += TransportCost(pick);
             }
+            return res;
+        }
+
+        /// <summary>
+        /// Répartit les véhicules achetés pour tout le raid sur ses vagues (D4) : chaque blindé, du plus cher au moins
+        /// cher, puis chaque transport, va à la vague dont les véhicules coûtent le moins jusqu'ici, dans la limite
+        /// des réglages par vague. Ce qui ne rentre nulle part est abandonné (compté dans <paramref name="dropped"/>).
+        /// </summary>
+        public static List<List<ThingDef>> Distribute(List<ThingDef> armored, List<ThingDef> transports, int waves, out int dropped, out float[] waveCost)
+        {
+            waves = Mathf.Max(1, waves);
+            int lost = 0;
+            var res = new List<List<ThingDef>>();
+            for (int i = 0; i < waves; i++) res.Add(new List<ThingDef>());
+            float[] cost = new float[waves];
+            int[] nArmored = new int[waves], nTransports = new int[waves];
+            void Put(ThingDef v, float c, int[] counts, int max)
+            {
+                int best = -1;
+                for (int i = 0; i < waves; i++)
+                    if (counts[i] < max && (best < 0 || cost[i] < cost[best])) best = i;
+                if (best < 0) { lost++; return; }
+                res[best].Add(v);
+                cost[best] += c;
+                counts[best]++;
+            }
+            if (armored != null)
+                foreach (ThingDef v in armored.OrderByDescending(Cost)) Put(v, Cost(v), nArmored, HRSettings.MaxVehicles);
+            if (transports != null)
+                foreach (ThingDef v in transports) Put(v, TransportCost(v), nTransports, HRSettings.MaxTransports);
+            waveCost = cost;
+            dropped = lost;
             return res;
         }
 
