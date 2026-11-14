@@ -106,12 +106,37 @@ namespace HardenedRaids
     /// Tourelle hors service = plus une menace : vanilla ne regarde que le courant et le servant ; on ajoute le
     /// chargeur vide (CE) et le carburant / les munitions épuisés (CompRefuelable). L'IA cesse donc de la viser.
     /// </summary>
+    /// <remarks>
+    /// Chemin chaud (chaque recherche de cible × chaque tourelle). Coût : par type de tourelle, l'accès à l'arme
+    /// et les accesseurs CE sont résolus une fois ; par tourelle, les comps (CompRefuelable, CompAmmoUser de la
+    /// tourelle et de son arme) sont trouvés une fois et lus par délégués liés ; le résultat est gardé pour le
+    /// tick en cours (une tourelle est évaluée des dizaines de fois par tick). Cache borné, vidé au changement de partie.
+    /// </remarks>
     [HarmonyPatch(typeof(Building_Turret), nameof(Building_Turret.ThreatDisabled))]
     public static class Patch_TurretThreat
     {
+        private const int MaxEntries = 4096;
+
         private static bool init;
         private static Type ammoUser;
-        private static PropertyInfo useAmmo, emptyMag;
+        private static MethodInfo useAmmoGetter, emptyMagGetter;
+
+        /// <summary>État résolu d'une tourelle (comps et délégués), plus le résultat du dernier tick évalué.</summary>
+        private sealed class Entry
+        {
+            public Building_Turret turret;
+            public CompRefuelable fuel;
+            public Func<bool> selfUse, selfEmpty;   // CompAmmoUser de la tourelle elle-même
+            public Func<Thing> gunGetter;           // propriété « Gun » (tourelles non vanilla, ex. CE)
+            public Thing gun;                       // arme pour laquelle gunUse / gunEmpty sont liés
+            public Func<bool> gunUse, gunEmpty;
+            public int tick = int.MinValue;
+            public bool result;
+        }
+
+        private static readonly Dictionary<int, Entry> cache = new Dictionary<int, Entry>();
+        private static readonly Dictionary<Type, MethodInfo> gunGetters = new Dictionary<Type, MethodInfo>();
+        private static Game cacheGame;
 
         public static void Postfix(Building_Turret __instance, ref bool __result)
         {
@@ -122,33 +147,88 @@ namespace HardenedRaids
 
         public static bool OutOfService(Building_Turret t)
         {
-            CompRefuelable fuel = t.GetComp<CompRefuelable>();
-            if (fuel != null && !fuel.HasFuel) return true;
-            if (!init)
-            {
-                init = true;
-                ammoUser = AccessTools.TypeByName("CombatExtended.CompAmmoUser");
-                if (ammoUser != null)
-                {
-                    useAmmo = AccessTools.Property(ammoUser, "UseAmmo");
-                    emptyMag = AccessTools.Property(ammoUser, "EmptyMagazine");
-                }
-            }
-            if (useAmmo == null || emptyMag == null) return false;
-            if (t is Building_TurretGun vg) return Empty(vg) || Empty(vg.gun as ThingWithComps);
-            if (!gunProps.TryGetValue(t.GetType(), out PropertyInfo gp))
-                gunProps[t.GetType()] = gp = AccessTools.Property(t.GetType(), "Gun");
-            return Empty(t) || Empty(gp?.GetValue(t) as ThingWithComps);
+            Entry e = EntryFor(t);
+            int now = Find.TickManager?.TicksGame ?? -1;
+            if (now >= 0 && e.tick == now) return e.result;
+            bool r = Compute(e);
+            e.tick = now;
+            e.result = r;
+            return r;
         }
 
-        private static readonly System.Collections.Generic.Dictionary<Type, PropertyInfo> gunProps = new System.Collections.Generic.Dictionary<Type, PropertyInfo>();
-
-        private static bool Empty(ThingWithComps th)
+        // Même logique que l'ancienne version : carburant vide, sinon (CE) chargeur vide de la tourelle ou de son arme.
+        private static bool Compute(Entry e)
         {
-            if (th == null) return false;
-            foreach (ThingComp comp in th.AllComps)
-                if (ammoUser.IsInstanceOfType(comp)) return (bool)useAmmo.GetValue(comp) && (bool)emptyMag.GetValue(comp);
-            return false;
+            if (e.fuel != null && !e.fuel.HasFuel) return true;
+            if (useAmmoGetter == null || emptyMagGetter == null) return false;
+            Thing gun = e.turret is Building_TurretGun vg ? vg.gun : e.gunGetter?.Invoke();
+            if (gun != e.gun) BindGun(e, gun);
+            return (e.selfUse != null && e.selfUse() && e.selfEmpty())
+                || (e.gunUse != null && e.gunUse() && e.gunEmpty());
+        }
+
+        private static Entry EntryFor(Building_Turret t)
+        {
+            Game g = Current.Game;
+            if (g != cacheGame || cache.Count >= MaxEntries) { cache.Clear(); cacheGame = g; }
+            if (cache.TryGetValue(t.thingIDNumber, out Entry e) && e.turret == t) return e;
+            e = new Entry { turret = t, fuel = t.GetComp<CompRefuelable>() };
+            Init();
+            if (useAmmoGetter != null && emptyMagGetter != null)
+            {
+                Bind(t, out e.selfUse, out e.selfEmpty);
+                if (!(t is Building_TurretGun))
+                {
+                    Type type = t.GetType();
+                    if (!gunGetters.TryGetValue(type, out MethodInfo gm))
+                    {
+                        PropertyInfo gp = AccessTools.Property(type, "Gun");
+                        gm = gp != null && typeof(Thing).IsAssignableFrom(gp.PropertyType) ? gp.GetGetMethod(true) : null;
+                        gunGetters[type] = gm;
+                    }
+                    if (gm != null)
+                        try { e.gunGetter = (Func<Thing>)Delegate.CreateDelegate(typeof(Func<Thing>), t, gm); }
+                        catch { gunGetters[type] = null; }
+                }
+            }
+            cache[t.thingIDNumber] = e;
+            return e;
+        }
+
+        private static void BindGun(Entry e, Thing gun)
+        {
+            e.gun = gun;
+            Bind(gun as ThingWithComps, out e.gunUse, out e.gunEmpty);
+        }
+
+        /// <summary>Premier CompAmmoUser de la chose (comme avant), lu par délégués liés à l'instance.</summary>
+        private static void Bind(ThingWithComps th, out Func<bool> use, out Func<bool> empty)
+        {
+            use = empty = null;
+            if (th == null) return;
+            try
+            {
+                foreach (ThingComp comp in th.AllComps)
+                    if (ammoUser.IsInstanceOfType(comp))
+                    {
+                        use = (Func<bool>)Delegate.CreateDelegate(typeof(Func<bool>), comp, useAmmoGetter);
+                        empty = (Func<bool>)Delegate.CreateDelegate(typeof(Func<bool>), comp, emptyMagGetter);
+                        return;
+                    }
+            }
+            catch { use = empty = null; } // liaison impossible : traité comme « pas de chargeur » (jamais relancé à chaque appel)
+        }
+
+        private static void Init()
+        {
+            if (init) return;
+            init = true;
+            ammoUser = AccessTools.TypeByName("CombatExtended.CompAmmoUser");
+            if (ammoUser == null) return;
+            useAmmoGetter = AccessTools.PropertyGetter(ammoUser, "UseAmmo");
+            emptyMagGetter = AccessTools.PropertyGetter(ammoUser, "EmptyMagazine");
+            if (useAmmoGetter?.ReturnType != typeof(bool) || emptyMagGetter?.ReturnType != typeof(bool))
+                useAmmoGetter = emptyMagGetter = null;
         }
     }
 
