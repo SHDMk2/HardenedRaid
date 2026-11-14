@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using RimWorld;
 using UnityEngine;
 using Verse;
@@ -17,6 +18,21 @@ namespace HardenedRaids
         public int count;
         public int index;
         public int totalWaves;
+        /// <summary>defNames des véhicules prévus pour cette vague (null = aucun ; save v1.0 : aucun, jamais d'achat).</summary>
+        public List<string> vehicles;
+
+        /// <summary>Véhicules de la vague encore présents dans le jeu (defs retirées ignorées).</summary>
+        public List<ThingDef> ResolveVehicles()
+        {
+            if (vehicles == null || vehicles.Count == 0) return null;
+            var res = new List<ThingDef>();
+            foreach (string n in vehicles)
+            {
+                ThingDef d = n.NullOrEmpty() ? null : DefDatabase<ThingDef>.GetNamedSilentFail(n);
+                if (d != null) res.Add(d);
+            }
+            return res.Count > 0 ? res : null;
+        }
 
         public void ExposeData()
         {
@@ -30,6 +46,7 @@ namespace HardenedRaids
             Scribe_Values.Look(ref count, "count");
             Scribe_Values.Look(ref index, "index");
             Scribe_Values.Look(ref totalWaves, "totalWaves");
+            Scribe_Collections.Look(ref vehicles, "vehicles", LookMode.Value);
         }
     }
 
@@ -38,6 +55,7 @@ namespace HardenedRaids
     {
         public int count;
         public float share;   // fraction des points du raid emportée par cette vague
+        public List<ThingDef> vehicles;   // part des véhicules du raid (null = aucun)
     }
 
     /// <summary>Vagues suivantes prévues pendant la génération, programmées seulement si le raid réussit.</summary>
@@ -52,16 +70,24 @@ namespace HardenedRaids
 
     public static class WaveScheduler
     {
-        /// <summary>Plan des vagues 2+ d'un raid Hardened : effectifs égaux, points au prorata.</summary>
-        public static WavePlan FromRaidPlan(RaidPlan plan)
+        /// <summary>
+        /// Plan des vagues 2+ d'un raid Hardened : effectifs égaux (ou <paramref name="counts"/> quand les véhicules
+        /// sont répartis), points au prorata, part des véhicules du raid.
+        /// </summary>
+        public static WavePlan FromRaidPlan(RaidPlan plan, int[] counts = null, List<List<ThingDef>> vehicles = null)
         {
             var wp = new WavePlan { total = plan.total, waves = plan.waves, tierX = plan.tierX };
-            int remaining = plan.total - plan.thisWave;
+            int remaining = plan.total - (counts != null ? counts[0] : plan.thisWave);
             for (int i = 2; i <= plan.waves && remaining > 0; i++)
             {
-                int n = Mathf.Min(plan.thisWave, remaining);
+                int n = counts != null && counts.Length >= i ? Mathf.Min(counts[i - 1], remaining) : Mathf.Min(plan.thisWave, remaining);
+                if (n <= 0) continue;
                 remaining -= n;
-                wp.next.Add(new WavePlanItem { count = n, share = n / (float)plan.total });
+                wp.next.Add(new WavePlanItem
+                {
+                    count = n, share = n / (float)plan.total,
+                    vehicles = vehicles != null && vehicles.Count >= i && vehicles[i - 1].Count > 0 ? vehicles[i - 1] : null,
+                });
             }
             return wp;
         }
@@ -86,6 +112,7 @@ namespace HardenedRaids
                 {
                     fireTick = tick, map = map, faction = parms.faction, strategy = parms.raidStrategy, arrival = parms.raidArrivalMode,
                     points = basePoints * it.share, tierX = wp.tierX, count = it.count, index = index++, totalWaves = wp.waves,
+                    vehicles = it.vehicles?.Select(v => v.defName).ToList(),
                 });
             }
             Messages.Message(Strings.T("MsgWaves", parms.faction.Name, wp.waves, wp.total,

@@ -31,6 +31,7 @@ namespace HardenedRaids
         public GroupPlan troop;
         public int ncos, officers; // grades de cette vague
         public ArmorGate gate;
+        public float frac;     // part du noyau (palier haut)
 
         /// <param name="allowWaves">false hors raid (navette écrasée, embuscade, site…) : une seule vague, plafonnée.</param>
         public static RaidPlan Make(FactionDef f, float points, float? xOverride, int? countOverride, bool needBreacher, System.Random rng, bool allowWaves = true)
@@ -50,7 +51,7 @@ namespace HardenedRaids
             float hiPrice = lo == hi ? loPrice : Pricing.ExpectedPrice(f, ladder[hi], hi, hiLoadout);
             float avg = Mathf.Max(1f, (1f - frac) * loPrice + frac * hiPrice);
 
-            var p = new RaidPlan { faction = f, points = points, tierX = x, gate = gate };
+            var p = new RaidPlan { faction = f, points = points, tierX = x, gate = gate, frac = frac };
             if (countOverride.HasValue)
             {
                 p.total = p.thisWave = Mathf.Max(1, countOverride.Value);
@@ -73,6 +74,18 @@ namespace HardenedRaids
             p.ncos = Pricing.NcoCount(p.thisWave);
             p.officers = Pricing.OfficerCount(p.thisWave);
             return p;
+        }
+
+        /// <summary>Change l'effectif de cette vague (véhicules répartis) : noyau, troupe et grades recalculés.</summary>
+        public void SetWaveCount(int n)
+        {
+            n = Mathf.Max(1, n);
+            thisWave = n;
+            int k = core != null || frac > 0f ? Mathf.RoundToInt(n * frac) : 0;
+            if (core != null) core.count = k; else k = 0;
+            troop.count = n - k;
+            ncos = Pricing.NcoCount(n);
+            officers = Pricing.OfficerCount(n);
         }
 
         public string Describe()
@@ -153,52 +166,67 @@ namespace HardenedRaids
             float tierX = wave?.tierX ?? Tiers.TierX(parms.faction.def, parms.points);
             if (tierX < 1f) return false;
 
-            // ---- véhicules (partie 2) : achetés sur le budget du raid, avant l'infanterie
-            float infantryPoints = parms.points;
+            // ---- véhicules : planifiés UNE fois pour tout le raid (budget sur ses points totaux), puis répartis sur
+            //      les vagues ; chaque vague emporte sa part et son infanterie en déduit le coût (D4). Une vague 2+
+            //      n'achète jamais rien : elle reçoit la part prévue par la vague 1 (rien pour une vague d'une save v1.0).
+            float raidPoints = parms.points;
+            float infantryPoints = raidPoints;
             List<ThingDef> vehicles = null;
-            if (inRaid && HRSettings.EnableVehicles && VehicleGate.Active && !frame.DebugTest && VehicleGate.ArrivalOk(frame.Parms?.raidArrivalMode)
-                && parms.faction.def.techLevel >= TechLevel.Industrial)
+            List<List<ThingDef>> waveVehicles = null;
+            float[] waveVehicleCost = null;
+            List<ThingDef> armored = null;
+            bool vehiclesOk = inRaid && HRSettings.EnableVehicles && VehicleGate.Active && !frame.DebugTest && VehicleGate.ArrivalOk(frame.Parms?.raidArrivalMode)
+                              && parms.faction.def.techLevel >= TechLevel.Industrial;
+            if (vehiclesOk && wave == null)
             {
                 try
                 {
                     // premier passage sans transports (que des légers) : sert à estimer les places et le reste pour l'infanterie
-                    vehicles = VehicleCompat.Plan(parms.faction, parms.points, tierX, 0, rng, out float vCost);
-                    if (wave == null) infantryPoints = Mathf.Max(parms.points * 0.5f, parms.points - vCost);
+                    armored = VehicleCompat.Plan(parms.faction, raidPoints, tierX, 0, rng, out float vCost);
+                    infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - vCost);
                 }
                 catch (Exception e)
                 {
                     Log.Warning("[Hardened Raids] vehicle selection: " + e.Message);
-                    vehicles = null;
+                    armored = null;
                 }
+            }
+            else if (vehiclesOk)
+            {
+                vehicles = wave.ResolveVehicles();
             }
 
             RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, needBreacher, rng, allowWaves: inRaid);
             if (plan == null) return false;
 
             // ---- transports (payants) pour l'infanterie qui ne monte pas dans les blindés ; on refait le plan avec le reste
-            if (vehicles != null)
+            if (armored != null)
             {
+                vehicles = armored;
                 try
                 {
-                    List<ThingDef> transports = VehicleCompat.PlanTransports(parms.faction, parms.points, tierX,
-                        plan.thisWave - VehicleCompat.SeatsIn(vehicles), rng, out float tCost);
+                    int w0 = plan.waves;
+                    List<ThingDef> transports = VehicleCompat.PlanTransports(parms.faction, raidPoints, tierX,
+                        plan.total - VehicleCompat.SeatsIn(armored), rng, out float tCost, HRSettings.MaxTransports * w0);
                     // second passage : tanks / appui-feu selon le nombre de transports (1 tank pour 4)
-                    float vCost0 = vehicles.Sum(VehicleCompat.Cost);
-                    List<ThingDef> armored = VehicleCompat.Plan(parms.faction, parms.points, tierX, transports.Count, rng, out float vCost);
-                    if (armored.Count > 0) vehicles = armored; else vCost = vCost0;
+                    float vCost0 = armored.Sum(VehicleCompat.Cost);
+                    List<ThingDef> armored2 = VehicleCompat.Plan(parms.faction, raidPoints, tierX, transports.Count, rng, out float vCost, HRSettings.MaxVehicles * w0);
+                    if (armored2.Count > 0) armored = armored2; else vCost = vCost0;
                     if (transports.Count > 0 || vCost != vCost0)
                     {
-                        vehicles.AddRange(transports);
-                        if (wave == null)
-                        {
-                            infantryPoints = Mathf.Max(parms.points * 0.5f, parms.points - vCost - tCost);
-                            plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, needBreacher, rng) ?? plan;
-                        }
+                        infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - vCost - tCost);
+                        plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, needBreacher, rng) ?? plan;
                     }
+                    waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped, out waveVehicleCost);
+                    if (dropped > 0) HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague abandonné(s).");
+                    vehicles = waveVehicles[0];
+                    if (plan.waves > 1) plan.SetWaveCount(WaveCounts(plan, waveVehicleCost, raidPoints)[0]);
                 }
                 catch (Exception e)
                 {
                     Log.Warning("[Hardened Raids] transport selection: " + e.Message);
+                    waveVehicles = null;
+                    vehicles = armored.Take(HRSettings.MaxVehicles).ToList();
                 }
             }
 
@@ -270,12 +298,44 @@ namespace HardenedRaids
             {
                 if (vehicles != null && vehicles.Count > 0) frame.PendingVehicles = vehicles;
                 // vagues suivantes : programmées par le postfix de TryGenerateRaidInfo si le raid aboutit (B12)
-                if (plan.waves > 1 && wave == null && !frame.DebugTest) frame.Planned = WaveScheduler.FromRaidPlan(plan);
+                if (plan.waves > 1 && wave == null && !frame.DebugTest)
+                    frame.Planned = WaveScheduler.FromRaidPlan(plan, waveVehicleCost != null ? WaveCounts(plan, waveVehicleCost, raidPoints) : null, waveVehicles);
             }
             HRLog.Msg((inRaid ? "" : $"hors raid ({parms.groupKind?.defName}) — ") + (wave != null ? $"vague {wave.index}/{wave.totalWaves} — " : "") + plan.Describe() +
                       $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}, coût réel ≈ {spent:F0} / {infantryPoints:F0} pts" +
                       (vehicles != null && vehicles.Count > 0 ? $", véhicules : {string.Join(", ", vehicles.Select(v => v.label))}" : ""));
             return outPawns.Count > 0;
+        }
+
+        /// <summary>
+        /// Effectif de chaque vague quand les véhicules sont répartis : l'infanterie totale du plan, partagée au prorata
+        /// de (part des points de la vague − coût de ses véhicules) ; au plus le plafond par vague (+10 %).
+        /// </summary>
+        private static int[] WaveCounts(RaidPlan plan, float[] vehicleCost, float raidPoints)
+        {
+            int w = Mathf.Max(1, plan.waves);
+            var counts = new int[w];
+            if (w == 1 || vehicleCost == null || vehicleCost.Length != w) { counts[0] = plan.thisWave; return counts; }
+            float per = raidPoints / w;
+            var weight = new float[w];
+            float sum = 0f;
+            for (int i = 0; i < w; i++) { weight[i] = Mathf.Max(per * 0.25f, per - vehicleCost[i]); sum += weight[i]; }
+            int max = Mathf.Max(plan.thisWave, Mathf.FloorToInt(Tiers.WaveCapFor(plan.faction) * 1.1f));
+            int given = 0;
+            var rem = new List<(int i, float r)>();
+            for (int i = 0; i < w; i++)
+            {
+                float exact = plan.total * weight[i] / sum;
+                counts[i] = Mathf.Clamp(Mathf.FloorToInt(exact), 1, max);
+                given += counts[i];
+                rem.Add((i, exact - Mathf.Floor(exact)));
+            }
+            foreach (var (i, _) in rem.OrderByDescending(x => x.r))
+            {
+                if (given >= plan.total) break;
+                if (counts[i] < max) { counts[i]++; given++; }
+            }
+            return counts;
         }
 
         private static void AssignRoles(List<Slot> group, Func<PawnKindDef, bool> isRequired)
