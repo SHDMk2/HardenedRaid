@@ -84,6 +84,9 @@ namespace HardenedRaids
                 __state = VanillaWaveCap.Arm(parms, main ? frame : null, Tiers.WaveCapFor(parms.faction.def));
                 return true;
             }
+            // non-humains hostiles d'un raid (mécanoïdes…) : plafond low-tech par vague, le reste en vagues (A12 / D5)
+            if (main && parms.faction != null && !parms.faction.def.humanlikeFaction && parms.faction.HostileTo(Faction.OfPlayer))
+                __state = VanillaWaveCap.Arm(parms, frame, VanillaWaveCap.NonHumanCap);
             return true;
         }
 

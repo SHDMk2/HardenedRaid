@@ -328,6 +328,11 @@ namespace HardenedRaids
                 HRLog.Msg($"vague {w.index}/{w.totalWaves} annulée (quête terminée).");
                 return;
             }
+            if (w.IsInfestation)
+            {
+                InfestationWaves.Fire(w, quest);
+                return;
+            }
             if (w.faction == null || w.faction.defeated || !w.faction.HostileTo(Faction.OfPlayer))
             {
                 HRLog.Msg($"vague {w.index}/{w.totalWaves} annulée (faction plus valide).");
