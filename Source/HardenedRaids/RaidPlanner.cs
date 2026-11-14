@@ -120,6 +120,8 @@ namespace HardenedRaids
         public static Slot Current;
         /// <summary>Profondeur d'imbrication de PawnGenerator.GeneratePawn (les proches générés pendant un raider sont plus profonds).</summary>
         public static int Depth;
+        /// <summary>> 0 : génération de groupes non combattants (cadavres…) en cours, pas de génération Hardened.</summary>
+        public static int NonCombat;
 
         public static Slot For(Pawn p)
         {
@@ -146,6 +148,7 @@ namespace HardenedRaids
             // raids, mais aussi tout groupe hostile hors raid : quêtes (navette écrasée…), embuscades,
             // rançons de caravane, défenseurs de sites et de colonies, pourparlers ratés
             if (!HRSettings.EnableTiers) return false;
+            if (GenContext.NonCombat > 0) return false;   // cadavres d'une colonie abandonnée, d'un appel de détresse…
             Faction f = parms.faction;
             if (f == null || f.IsPlayer || !f.def.humanlikeFaction || !f.HostileTo(Faction.OfPlayer)) return false;
             if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return false;
