@@ -117,10 +117,16 @@ namespace HardenedRaids
             Scribe_Values.Look(ref Language, "Language", HRLanguage.English);
         }
 
+        // défilement : la v1.1 a ajouté assez de réglages pour dépasser la hauteur de la fenêtre
+        private static Vector2 scroll;
+        private static float viewHeight = 1400f;
+
         public static void DoWindow(Rect rect)
         {
-            var l = new Listing_Standard { ColumnWidth = rect.width / 2f - 17f };
-            l.Begin(rect);
+            var view = new Rect(0f, 0f, rect.width - 16f, Mathf.Max(rect.height, viewHeight));
+            Widgets.BeginScrollView(rect, ref scroll, view);
+            var l = new Listing_Standard { ColumnWidth = view.width / 2f - 17f };
+            l.Begin(view);
 
             Rect langRow = l.GetRect(28f);
             Widgets.Label(langRow.LeftHalf(), Strings.T("Language"));
@@ -219,7 +225,9 @@ namespace HardenedRaids
             l.CheckboxLabeled(Strings.T("TruckTurrets"), ref TruckTurrets);
             MaxTruckTurrets = (int)l.SliderLabeled(Strings.T("MaxTruckTurrets", MaxTruckTurrets), MaxTruckTurrets, 0, 10, 0.5f);
 
+            viewHeight = l.MaxColumnHeightSeen + 12f;
             l.End();
+            Widgets.EndScrollView();
         }
     }
 

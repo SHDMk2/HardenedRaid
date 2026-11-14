@@ -26,7 +26,9 @@ namespace HardenedRaids
             // palier forcé du raid : celui de la vague en cours (WaveEntry.tierX, fixé par la vague 1), sinon celui du raid
             // (parms.points = points ajustés, les mêmes que ceux du plan de génération)
             WaveEntry wave = RaidContext.PendingWave;
-            float x = wave != null && wave.map == map && wave.faction == parms.faction ? wave.tierX : Tiers.TierX(parms.faction.def, parms.points);
+            bool ourWave = wave != null && wave.map == map && wave.faction == parms.faction;
+            if (ourWave && wave.FromSiege) return;   // vague 2+ d'un siège : seul le camp de la vague 1 existe (A5)
+            float x = ourWave ? wave.tierX : Tiers.TierX(parms.faction.def, parms.points);
             if (x < HRSettings.SupportMinTier) return;
 
             List<Pawn> cands = pawns.Where(p => p.Spawned && !p.Downed && p.RaceProps.Humanlike && !VehicleGate.IsVehicle(p)
@@ -48,6 +50,7 @@ namespace HardenedRaids
             foreach (Pawn p in team) pawns.Remove(p);
             float blueprintPoints = Mathf.Max(60f, parms.points * 0.25f);
             Lord camp = LordMaker.MakeNewLord(parms.faction, new LordJob_Siege(parms.faction, spot, blueprintPoints), map, team);
+            SiegeTier.Register(camp.LordJob, x);                          // camp au palier du raid, pas de ses points
             MapComponent_HostileTurretSupply.RegisterSupportLord(camp);   // ses tourelles seront ravitaillées
             Messages.Message(Strings.T("MsgSupportTeam", parms.faction.Name, team.Count),
                 new TargetInfo(spot, map), MessageTypeDefOf.ThreatBig);

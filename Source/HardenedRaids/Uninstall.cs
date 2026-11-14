@@ -29,6 +29,7 @@ namespace HardenedRaids
         public static readonly Action[] OtherSteps =
         {
             MapComponent_HostileTurretSupply.PrepareUninstall,   // lot S : registre des tourelles, caisses posées
+            GameComponent_Waves.PrepareUninstall,                // lot waves : vagues en attente, pile de contextes
         };
 
         /// <summary>Bouton des réglages : seulement en partie.</summary>
