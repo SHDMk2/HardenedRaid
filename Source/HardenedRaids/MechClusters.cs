@@ -43,6 +43,7 @@ namespace HardenedRaids
         // drapeaux de l'appel en cours (thread principal uniquement)
         internal static bool Reentrant;
         internal static bool Strict;   // grappe supplémentaire : pas d'emplacement distinct = pas de grappe (différée)
+        internal static float GatePoints = -1f;   // menace totale d'une grappe scindée : blocage des blindés comme pour le tout
 
         /// <summary>Grappes différées : groupes de MaxSimultaneous, délai des vagues entre deux groupes.</summary>
         public static void Defer(Map map, float perCluster, int count)
@@ -86,6 +87,7 @@ namespace HardenedRaids
             try
             {
                 parms.points = per;
+                ClusterSplit.GatePoints = total;
                 for (int i = 0; i < simult; i++)
                 {
                     bool ok;
@@ -102,7 +104,7 @@ namespace HardenedRaids
                     else if (i == 0) break;      // comme vanilla : l'incident échoue
                 }
             }
-            finally { parms.points = total; }
+            finally { parms.points = total; ClusterSplit.GatePoints = -1f; }
             if (spawned == 0) { __result = false; return false; }
             ClusterSplit.Defer(map, per, n - spawned);
             ClusterSplit.Announce(n, spawned, n - spawned, per);
@@ -119,7 +121,7 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(RaidStrategyWorker_SiegeMechanoid), nameof(RaidStrategyWorker_SiegeMechanoid.TryGenerateThreats))]
     public static class Patch_SiegeMechanoidGenerate
     {
-        internal sealed class Split { public int n; public float per; }
+        internal sealed class Split { public int n; public float per, total; }
         internal static readonly ConditionalWeakTable<IncidentParms, Split> Pending = new ConditionalWeakTable<IncidentParms, Split>();
 
         public static bool Prefix(IncidentParms parms)
@@ -128,8 +130,10 @@ namespace HardenedRaids
             Pending.Remove(parms);
             int n = ClusterSplit.CountFor(parms.points);
             if (n <= 1) return true;
-            var split = new Split { n = n, per = parms.points / n };
-            parms.mechClusterSketch = MechClusterGenerator.GenerateClusterSketch(split.per, parms.target as Map);
+            var split = new Split { n = n, per = parms.points / n, total = parms.points };
+            ClusterSplit.GatePoints = split.total;
+            try { parms.mechClusterSketch = MechClusterGenerator.GenerateClusterSketch(split.per, parms.target as Map); }
+            finally { ClusterSplit.GatePoints = -1f; }
             Pending.Add(parms, split);
             return false;
         }
@@ -148,7 +152,10 @@ namespace HardenedRaids
             {
                 try
                 {
-                    MechClusterSketch sketch = MechClusterGenerator.GenerateClusterSketch(split.per, map);
+                    MechClusterSketch sketch;
+                    ClusterSplit.GatePoints = split.total;
+                    try { sketch = MechClusterGenerator.GenerateClusterSketch(split.per, map); }
+                    finally { ClusterSplit.GatePoints = -1f; }
                     IntVec3 center;
                     ClusterSplit.Strict = true;
                     try { center = MechClusterUtility.FindClusterPosition(map, sketch, 100, 0.5f); }
@@ -213,7 +220,7 @@ namespace HardenedRaids
             points = Mathf.Min(points, ClusterSplit.SingleCap);
             List<PawnKindDef> kinds = DefDatabase<PawnKindDef>.AllDefsListForReading.Where(MechClusterGenerator.MechKindSuitableForCluster).ToList();
             TurretPricing.Push();
-            bool priced = MechPricing.Push(kinds, points);
+            bool priced = MechPricing.Push(kinds, Mathf.Max(points, ClusterSplit.GatePoints));
             try
             {
                 __result = Build(points, map, startDormant, forceNoConditionCauser, kinds);
@@ -270,7 +277,7 @@ namespace HardenedRaids
         {
             CellRect rect = sketch.OccupiedRect;
             var pool = new List<IntVec3>(Mathf.Max(16, rect.Area));
-            foreach (IntVec3 c in rect) if (!sketch.AnyThingAt(c)) pool.Add(c);
+            foreach (IntVec3 c in rect) if (!sketch.ThingsAt(c).Any()) pool.Add(c);   // même test que vanilla
             int rings = 0;
             for (int i = 0; i < mechs.Count; i++)
             {
