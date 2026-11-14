@@ -54,6 +54,11 @@ namespace HardenedRaids
         public static float SupportMinTier = 3f;
         public static float SupportShare = 0.12f;  // part des raiders qui montent le camp d'appui
 
+        // --- lot uncap ---
+        public static float SettlementThreatShare = 0.25f; // défenseurs des colonies hostiles : part de la menace du joueur
+        public static bool SettlementVehicles = true;      // véhicules VF garés autour des colonies hostiles
+        public static bool SettlementTurrets = true;       // tourelles des mods dans la défense périphérique
+
         public static bool VerboseLog = false;
         public static HRLanguage Language = HRLanguage.English;
 
@@ -97,6 +102,10 @@ namespace HardenedRaids
             Scribe_Values.Look(ref EnableSupportTeams, "EnableSupportTeams", true);
             Scribe_Values.Look(ref SupportMinTier, "SupportMinTier", 3f);
             Scribe_Values.Look(ref SupportShare, "SupportShare", 0.12f);
+            // --- lot uncap ---
+            Scribe_Values.Look(ref SettlementThreatShare, "SettlementThreatShare", 0.25f);
+            Scribe_Values.Look(ref SettlementVehicles, "SettlementVehicles", true);
+            Scribe_Values.Look(ref SettlementTurrets, "SettlementTurrets", true);
             Scribe_Values.Look(ref VerboseLog, "VerboseLog", false);
             Scribe_Values.Look(ref Language, "Language", HRLanguage.English);
         }
@@ -128,6 +137,11 @@ namespace HardenedRaids
             if (before != ExtendWealthCurves || uncapBefore != UncapPoints) PointsPatches.ApplyCurves();
             if (Current.ProgramState == ProgramState.Playing && Find.CurrentMap != null)
                 l.Label(Strings.T("PointsNow", RimWorld.StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap).ToString("F0")));
+            // --- lot uncap ---
+            SettlementThreatShare = Mathf.Round(l.SliderLabeled(Strings.T("SettlementShare", SettlementThreatShare.ToString("P0")), SettlementThreatShare, 0f, 1f, 0.5f,
+                Strings.T("SettlementShareTip")) * 20f) / 20f;
+            l.CheckboxLabeled(Strings.T("SettlementTurrets"), ref SettlementTurrets, Strings.T("SettlementTurretsTip"));
+            l.CheckboxLabeled(Strings.T("SettlementVehicles"), ref SettlementVehicles, Strings.T("SettlementVehiclesTip"));
             l.GapLine();
 
             l.Label(Strings.T("SecTiers"));
