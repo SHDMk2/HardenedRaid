@@ -53,6 +53,9 @@ namespace HardenedRaids
 
         public override bool AddFleeToil => false;
 
+        /// <summary>Faction disparue au chargement (mod retiré...) : vanilla supprime le lord proprement (Lord.ExposeData_StateGraph).</summary>
+        public override bool LostImportantReferenceDuringLoading => faction == null;
+
         public override StateGraph CreateGraph()
         {
             var g = new StateGraph();
@@ -687,6 +690,8 @@ namespace HardenedRaids
         public LordJob_HRTurretCrew() { }
         public LordJob_HRTurretCrew(Faction f) { faction = f; }
 
+        public override bool LostImportantReferenceDuringLoading => faction == null;
+
         public override StateGraph CreateGraph()
         {
             var g = new StateGraph();
@@ -758,6 +763,9 @@ namespace HardenedRaids
         public LordJob_HRBoard(Faction f, Lord convoy) { faction = f; this.convoy = convoy; }
 
         public override bool AddFleeToil => false;
+
+        /// <summary>Sans faction : lord supprimé au chargement. Sans convoi : on garde le lord (sortie à pied par la duty).</summary>
+        public override bool LostImportantReferenceDuringLoading => faction == null;
 
         public override StateGraph CreateGraph()
         {
