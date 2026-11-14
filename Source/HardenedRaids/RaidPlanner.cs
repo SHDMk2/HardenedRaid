@@ -144,8 +144,10 @@ namespace HardenedRaids
 
         public static bool TryGenerate(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns)
         {
-            bool inRaid = RaidContext.Parms != null;
-            WaveEntry wave = inRaid ? RaidContext.PendingWave : null;
+            // groupe principal du raid en cours (réclamé par Patch_GeneratePawns) ; tout autre groupe = hors raid, une vague
+            RaidFrame frame = RaidContext.Current;
+            bool inRaid = frame != null && frame.IsMainGroup(parms);
+            WaveEntry wave = inRaid ? frame.Wave : null;
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out Func<PawnKindDef, bool> isRequired);
             var rng = new System.Random(Rand.Int);
             float tierX = wave?.tierX ?? Tiers.TierX(parms.faction.def, parms.points);
@@ -154,7 +156,7 @@ namespace HardenedRaids
             // ---- véhicules (partie 2) : achetés sur le budget du raid, avant l'infanterie
             float infantryPoints = parms.points;
             List<ThingDef> vehicles = null;
-            if (inRaid && HRSettings.EnableVehicles && VehicleGate.Active && !RaidContext.DebugTest && VehicleGate.ArrivalOk(RaidContext.Parms?.raidArrivalMode)
+            if (inRaid && HRSettings.EnableVehicles && VehicleGate.Active && !frame.DebugTest && VehicleGate.ArrivalOk(frame.Parms?.raidArrivalMode)
                 && parms.faction.def.techLevel >= TechLevel.Industrial)
             {
                 try
@@ -246,10 +248,6 @@ namespace HardenedRaids
                 spent += Pricing.SlotPrice(s);
             }
 
-            // ---- vagues suivantes
-            if (inRaid && plan.waves > 1 && wave == null && !RaidContext.DebugTest)
-                WaveScheduler.Schedule(plan, RaidContext.Parms);
-
             // ---- génération
             bool allowFood = parms.raidStrategy == null || parms.raidStrategy.pawnsCanBringFood || (parms.faction != null && !parms.faction.HostileTo(Faction.OfPlayer));
             Predicate<Pawn> validator = parms.raidStrategy != null ? (Pawn p) => parms.raidStrategy.Worker.CanUsePawn(parms.points, p, outPawns) : null;
@@ -268,7 +266,12 @@ namespace HardenedRaids
                 outPawns.Add(pawn);
             }
 
-            if (vehicles != null && vehicles.Count > 0 && outPawns.Count > 0) RaidContext.PendingVehicles = vehicles;
+            if (inRaid && outPawns.Count > 0)
+            {
+                if (vehicles != null && vehicles.Count > 0) frame.PendingVehicles = vehicles;
+                // vagues suivantes : programmées par le postfix de TryGenerateRaidInfo si le raid aboutit (B12)
+                if (plan.waves > 1 && wave == null && !frame.DebugTest) frame.Planned = WaveScheduler.FromRaidPlan(plan);
+            }
             HRLog.Msg((inRaid ? "" : $"hors raid ({parms.groupKind?.defName}) — ") + (wave != null ? $"vague {wave.index}/{wave.totalWaves} — " : "") + plan.Describe() +
                       $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}, coût réel ≈ {spent:F0} / {infantryPoints:F0} pts" +
                       (vehicles != null && vehicles.Count > 0 ? $", véhicules : {string.Join(", ", vehicles.Select(v => v.label))}" : ""));

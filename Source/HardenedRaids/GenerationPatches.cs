@@ -16,6 +16,14 @@ namespace HardenedRaids
             __state = RaidContext.Push(parms, debugTest);
         }
 
+        // vagues suivantes : programmées seulement si le raid a réellement été généré (B12)
+        public static void Postfix(bool debugTest, bool __result, RaidFrame __state)
+        {
+            if (!__result || debugTest || __state == null) return;
+            try { WaveScheduler.Commit(__state); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] wave scheduling: " + e); }
+        }
+
         public static void Finalizer(RaidFrame __state)
         {
             RaidContext.Pop(__state);
@@ -36,21 +44,36 @@ namespace HardenedRaids
         new[] { typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(List<Pawn>), typeof(bool) })]
     public static class Patch_GeneratePawns
     {
-        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns)
+        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns, out bool __state)
         {
-            if (!RaidGenerator.Applies(parms)) return true;
-            try
+            __state = false;
+            // groupe principal du raid en cours (le premier groupe de la faction du raid) : seul à pouvoir faire des vagues
+            RaidFrame frame = RaidContext.Current;
+            bool main = frame != null && frame.TryClaimMainGroup(parms);
+            if (RaidGenerator.Applies(parms))
             {
-                if (RaidGenerator.TryGenerate(parms, groupMaker, outPawns)) return false;
-            }
-            catch (Exception e)
-            {
-                Log.Error("[Hardened Raids] raid generation failed, falling back to vanilla: " + e);
-                foreach (Pawn p in outPawns) if (!p.Destroyed) p.Destroy();
-                outPawns.Clear();
-                GenContext.Current = null;
+                try
+                {
+                    if (RaidGenerator.TryGenerate(parms, groupMaker, outPawns)) return false;
+                }
+                catch (Exception e)
+                {
+                    Log.Error("[Hardened Raids] raid generation failed, falling back to vanilla: " + e);
+                    foreach (Pawn p in outPawns) if (!p.Destroyed) p.Destroy();
+                    outPawns.Clear();
+                    GenContext.Current = null;
+                }
+                // repli vanilla : rien de ce qui a été prévu (vagues, véhicules) ne vaut, mais le plafond par vague reste
+                if (main) frame.CancelPlanned();
+                __state = VanillaWaveCap.Arm(parms, main ? frame : null, Tiers.WaveCapFor(parms.faction.def));
+                return true;
             }
             return true;
+        }
+
+        public static void Finalizer(bool __state)
+        {
+            if (__state) VanillaWaveCap.Disarm();
         }
     }
 

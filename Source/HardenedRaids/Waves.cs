@@ -33,37 +33,65 @@ namespace HardenedRaids
         }
     }
 
-    public static class WaveScheduler
+    /// <summary>Une vague suivante prévue : effectif et part des points du raid.</summary>
+    public class WavePlanItem
     {
-        public static void Schedule(RaidPlan plan, IncidentParms parms)
-        {
-            if (parms?.target is not Map map || parms.faction == null) return;
-            var comp = Current.Game.GetComponent<GameComponent_Waves>();
-            if (comp == null) return;
-            float basePoints = RaidContext.PreAdjustPoints > 0f ? RaidContext.PreAdjustPoints : parms.points;
-            int remaining = plan.total - plan.thisWave;
-            int tick = Find.TickManager.TicksGame;
-            for (int i = 2; i <= plan.waves && remaining > 0; i++)
-            {
-                int n = Mathf.Min(plan.thisWave, remaining);
-                remaining -= n;
-                tick += Mathf.RoundToInt(Rand.Range(HRSettings.WaveDelayHoursMin, HRSettings.WaveDelayHoursMax) * GenDate.TicksPerHour);
-                comp.pending.Add(new WaveEntry
-                {
-                    fireTick = tick, map = map, faction = parms.faction, strategy = parms.raidStrategy, arrival = parms.raidArrivalMode,
-                    points = basePoints * n / plan.total, tierX = plan.tierX, count = n, index = i, totalWaves = plan.waves,
-                });
-            }
-            Messages.Message(Strings.T("MsgWaves", parms.faction.Name, plan.waves, plan.total,
-                                 $"{HRSettings.WaveDelayHoursMin:F0}-{HRSettings.WaveDelayHoursMax:F0} h"),
-                             MessageTypeDefOf.ThreatBig);
-        }
+        public int count;
+        public float share;   // fraction des points du raid emportée par cette vague
     }
 
     /// <summary>Vagues suivantes prévues pendant la génération, programmées seulement si le raid réussit.</summary>
     public class WavePlan
     {
-        public RaidPlan plan;
+        public int total;      // effectif total du raid (toutes vagues)
+        public int waves;
+        public float tierX;
+        public bool vanilla;   // génération vanilla plafonnée (repli, non-humains)
+        public List<WavePlanItem> next = new List<WavePlanItem>();   // vagues 2..n
+    }
+
+    public static class WaveScheduler
+    {
+        /// <summary>Plan des vagues 2+ d'un raid Hardened : effectifs égaux, points au prorata.</summary>
+        public static WavePlan FromRaidPlan(RaidPlan plan)
+        {
+            var wp = new WavePlan { total = plan.total, waves = plan.waves, tierX = plan.tierX };
+            int remaining = plan.total - plan.thisWave;
+            for (int i = 2; i <= plan.waves && remaining > 0; i++)
+            {
+                int n = Mathf.Min(plan.thisWave, remaining);
+                remaining -= n;
+                wp.next.Add(new WavePlanItem { count = n, share = n / (float)plan.total });
+            }
+            return wp;
+        }
+
+        /// <summary>Programme les vagues prévues par ce raid ; appelé après un TryGenerateRaidInfo réussi.</summary>
+        public static void Commit(RaidFrame frame)
+        {
+            WavePlan wp = frame?.Planned;
+            if (frame != null) frame.Planned = null;
+            if (wp == null || wp.next.Count == 0 || frame.DebugTest || frame.Wave != null) return;
+            IncidentParms parms = frame.Parms;
+            if (parms?.target is not Map map || parms.faction == null) return;
+            var comp = Current.Game.GetComponent<GameComponent_Waves>();
+            if (comp == null) return;
+            float basePoints = frame.PreAdjustPoints > 0f ? frame.PreAdjustPoints : parms.points;
+            int tick = Find.TickManager.TicksGame;
+            int index = 2;
+            foreach (WavePlanItem it in wp.next)
+            {
+                tick += Mathf.RoundToInt(Rand.Range(HRSettings.WaveDelayHoursMin, HRSettings.WaveDelayHoursMax) * GenDate.TicksPerHour);
+                comp.pending.Add(new WaveEntry
+                {
+                    fireTick = tick, map = map, faction = parms.faction, strategy = parms.raidStrategy, arrival = parms.raidArrivalMode,
+                    points = basePoints * it.share, tierX = wp.tierX, count = it.count, index = index++, totalWaves = wp.waves,
+                });
+            }
+            Messages.Message(Strings.T("MsgWaves", parms.faction.Name, wp.waves, wp.total,
+                                 $"{HRSettings.WaveDelayHoursMin:F0}-{HRSettings.WaveDelayHoursMax:F0} h"),
+                             MessageTypeDefOf.ThreatBig);
+        }
     }
 
     public class GameComponent_Waves : GameComponent
