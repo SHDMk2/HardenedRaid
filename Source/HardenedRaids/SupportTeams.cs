@@ -23,7 +23,10 @@ namespace HardenedRaids
             if (parms.raidStrategy?.Worker == null || parms.raidStrategy.Worker is RaidStrategyWorker_Siege) return;
             if (parms.faction.def.techLevel < TechLevel.Industrial || !parms.faction.def.humanlikeFaction) return;
             if (parms.raidArrivalMode?.workerClass == null || !parms.raidArrivalMode.workerClass.Name.Contains("Edge")) return;
-            float x = Tiers.TierX(parms.faction.def, parms.points);
+            // palier forcé du raid : celui de la vague en cours (WaveEntry.tierX, fixé par la vague 1), sinon celui du raid
+            // (parms.points = points ajustés, les mêmes que ceux du plan de génération)
+            WaveEntry wave = RaidContext.PendingWave;
+            float x = wave != null && wave.map == map && wave.faction == parms.faction ? wave.tierX : Tiers.TierX(parms.faction.def, parms.points);
             if (x < HRSettings.SupportMinTier) return;
 
             List<Pawn> cands = pawns.Where(p => p.Spawned && !p.Downed && p.RaceProps.Humanlike && !VehicleGate.IsVehicle(p)
