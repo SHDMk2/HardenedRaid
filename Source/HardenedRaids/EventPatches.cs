@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using System.Runtime.CompilerServices;
 using HarmonyLib;
 using RimWorld;
 using RimWorld.Planet;
@@ -123,8 +124,13 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(StorytellerComp), "IncidentChanceFinal")]
     public static class Patch_AnimalEventRarity
     {
-        private static readonly Dictionary<int, float> maxPowerByMap = new Dictionary<int, float>();
+        // B7 : indexé par l'objet Map (pas uniqueID, qui repart de 0 à chaque partie) ; entrées libérées avec la carte
+        private sealed class PowerEntry { public float value; }
+        private static ConditionalWeakTable<Map, PowerEntry> maxPowerByMap = new ConditionalWeakTable<Map, PowerEntry>();
         private static float globalMaxPower = -1f;
+
+        /// <summary>Vidé à chaque chargement / nouvelle partie (Game.FinalizeInit).</summary>
+        public static void ClearCache() => maxPowerByMap = new ConditionalWeakTable<Map, PowerEntry>();
 
         public static void Postfix(IncidentDef def, IIncidentTarget target, ref float __result)
         {
@@ -162,8 +168,8 @@ namespace HardenedRaids
         /// <summary>Bête la plus forte qui peut arriver enragée sur cette carte (biome d'abord, comme vanilla).</summary>
         private static float MaxManhunterPower(Map map)
         {
-            if (maxPowerByMap.TryGetValue(map.uniqueID, out float v)) return v;
-            v = map.Biomes.SelectMany(b => b.AllWildAnimals).Where(AnimalCaps.CanArriveManhunter)
+            if (maxPowerByMap.TryGetValue(map, out PowerEntry e)) return e.value;
+            float v = map.Biomes.SelectMany(b => b.AllWildAnimals).Where(AnimalCaps.CanArriveManhunter)
                 .Select(k => k.combatPower).DefaultIfEmpty(0f).Max();
             if (v <= 0f)
             {
@@ -172,8 +178,14 @@ namespace HardenedRaids
                         .Select(k => k.combatPower).DefaultIfEmpty(100f).Max();
                 v = globalMaxPower;
             }
-            maxPowerByMap[map.uniqueID] = v;
+            maxPowerByMap.AddOrUpdate(map, new PowerEntry { value = v });
             return v;
         }
+    }
+
+    [HarmonyPatch(typeof(Game), nameof(Game.FinalizeInit))]
+    public static class Patch_ClearEventCaches
+    {
+        public static void Postfix() => Patch_AnimalEventRarity.ClearCache();
     }
 }
