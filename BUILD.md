@@ -19,6 +19,9 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | File | Role |
 |---|---|
 | `PointsPatches.cs` | 10,000 points cap (transpiler) + wealth curves extended beyond 1M |
+| `UncapPatches.cs` | off-raid point curves (distant fights, sites, relic hunts, complexes, sleeping mechs, Anomaly…) extended past their last point keeping the ratio, deep drill infestation cap |
+| `SettlementDefense.cs` | hostile faction bases: defenders at a share of the player's threat, modded perimeter turrets and their crews |
+| `SettlementVehicles.cs` | hostile faction bases: Vehicle Framework vehicles parked around the base (touches VF types, only called when VF is active) |
 | `Tiers.cs` | tiers T0-T6 (industrial+) and N0-N5 (neolithic/medieval), points → tier curves |
 | `Pricing.cs` | ranks (1 NCO / 10, 1 officer / 100), truncated gaussian quality per rank, price = body + gear value ÷ rate, armor / armored mechanoid gate and pricing |
 | `RaidPlanner.cs` | raid plan (core + troops), pawnkinds, roles, generation, vehicle and transport purchase |

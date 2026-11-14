@@ -12,7 +12,14 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(StorytellerUtility), nameof(StorytellerUtility.DefaultThreatPointsNow))]
     public static class PointsPatches
     {
-        private static readonly string[] CurveFields = { "PointsPerWealthCurve", "PointsPerColonistByWealthCurve" };
+        // courbes richesse -> points (et facteurs liés à la richesse), prolongées avec la pente du dernier segment.
+        // FixedWealthModeMapWealthFromTimeCurve : jours -> richesse du mode « richesse fixe » (sature à 2,5M après 1800 jours).
+        private static readonly string[] CurveFields =
+        {
+            "PointsPerWealthCurve", "PointsPerColonistByWealthCurve",
+            "PointsFactorForColonyMechsCurve", "PointsFactorForColonySubhumanCurve",
+            "FixedWealthModeMapWealthFromTimeCurve",
+        };
         private static readonly Dictionary<string, List<CurvePoint>> originals = new Dictionary<string, List<CurvePoint>>();
 
         public static float MaxPoints() => HRSettings.UncapPoints ? float.MaxValue : 10000f;
@@ -64,6 +71,9 @@ namespace HardenedRaids
                 }
                 curve.SetPoints(pts);
             }
+            // courbes points -> points hors raid (lot uncap), selon UncapPoints
+            try { UncapCurves.Apply(); }
+            catch (System.Exception e) { Log.Warning("[Hardened Raids] uncapped curves: " + e); }
         }
     }
 }

@@ -1,0 +1,342 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
+using HarmonyLib;
+using RimWorld;
+using RimWorld.BaseGen;
+using RimWorld.Planet;
+using UnityEngine;
+using Verse;
+using Verse.AI.Group;
+
+namespace HardenedRaids
+{
+    /// <summary>
+    /// Lot uncap, décision D2 : défenseurs des colonies de faction hostiles.
+    ///  - Points des défenseurs = part (25 %) de la menace actuelle du joueur, jamais moins que vanilla (1150-1600).
+    ///  - Tourelles des mods (catalogue de siège) à la place des mini-tourelles vanilla de la défense périphérique, plus
+    ///    quelques-unes selon le palier ; servants pris parmi les défenseurs (lord vanilla LordJob_ManTurrets).
+    ///  - Véhicules Vehicle Framework garés autour de la colonie (1 pour 15 défenseurs), sans lord : les tourelles des
+    ///    véhicules PNJ tirent seules (VF active le tir automatique des véhicules non joueurs) dès qu'un tireur est à bord.
+    /// Rien n'est sauvegardé par le mod : seuls des objets vanilla / VF ordinaires sont créés pendant la génération de la carte.
+    /// S'applique uniquement à une carte dont le parent est une colonie (Settlement) d'une faction humaine hostile au
+    /// moment de la génération : jamais aux colonies du joueur, alliées / neutres, abandonnées / détruites (autres
+    /// types de WorldObject), ni à la génération du monde (aucune carte n'y est générée).
+    /// </summary>
+    public static class SettlementDefense
+    {
+        /// <summary>Génération en cours d'une colonie hostile (null sinon). Vidé à la fin de MapGenerator.GenerateMap.</summary>
+        public class Context
+        {
+            public Map map;
+            public Faction faction;
+            public float points;       // points des défenseurs
+            public float tierX;
+            public int expectedDefenders;
+            public int mannedLeft;     // tourelles servies encore autorisées
+            public readonly HashSet<ThingDef> turretDefs = new HashSet<ThingDef>(); // modèles posés par nous
+        }
+
+        public static Context Current;
+
+        public static readonly FloatRange VanillaPoints = new FloatRange(1150f, 1600f);
+
+        /// <summary>Faction d'une colonie humaine hostile au joueur, parent de la carte ; null sinon.</summary>
+        public static Faction HostileSettlementFaction(Map map)
+        {
+            if (map?.info?.parent is not Settlement s) return null;
+            Faction f = s.Faction;
+            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction || !f.HostileTo(Faction.OfPlayer)) return null;
+            return f;
+        }
+
+        /// <summary>
+        /// Menace actuelle du joueur : la plus forte de ses cartes de colonie (sa base principale) ; sans colonie (nomade,
+        /// gravship en vol), le monde entier comme vanilla pour les sites. Une carte plutôt que Find.World : le monde
+        /// additionne la richesse de toutes les colonies et caravanes, ce qui n'est pas « la colonie du joueur ».
+        /// </summary>
+        public static float PlayerThreatNow()
+        {
+            float best = -1f;
+            List<Map> maps = Find.Maps;
+            for (int i = 0; i < maps.Count; i++)
+                if (maps[i].IsPlayerHome) best = Mathf.Max(best, StorytellerUtility.DefaultThreatPointsNow(maps[i]));
+            return best >= 0f ? best : StorytellerUtility.DefaultThreatPointsNow(Find.World);
+        }
+
+        /// <summary>Crée le contexte pour la carte en génération si c'est une colonie hostile ; renvoie les points des défenseurs.</summary>
+        public static Context Begin(Map map, Faction rpFaction)
+        {
+            if (Current != null && Current.map == map) return Current;
+            Faction f = HostileSettlementFaction(map);
+            if (f == null || (rpFaction != null && rpFaction != f)) return null;
+            float vanilla = VanillaPoints.RandomInRange;
+            float points = vanilla;
+            if (HRSettings.UncapPoints && HRSettings.SettlementThreatShare > 0f)
+                points = Mathf.Max(vanilla, PlayerThreatNow() * HRSettings.SettlementThreatShare);
+            var ctx = new Context { map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points) };
+            ctx.expectedDefenders = EstimateDefenders(f, points);
+            // servants : au plus 1 défenseur sur 10 (les autres restent mobiles)
+            ctx.mannedLeft = ctx.expectedDefenders / 10;
+            Current = ctx;
+            HRLog.Msg($"colonie hostile {f.Name} : défenseurs {points:F0} pts (vanilla {vanilla:F0}, part {HRSettings.SettlementThreatShare:P0}), palier {ctx.tierX:F2}, ~{ctx.expectedDefenders} défenseurs prévus");
+            return ctx;
+        }
+
+        private static int EstimateDefenders(Faction f, float points)
+        {
+            try
+            {
+                if (HRSettings.EnableTiers)
+                {
+                    RaidPlan plan = RaidPlan.Make(f.def, points, null, null, false, new System.Random(Rand.Int), allowWaves: false);
+                    if (plan != null) return plan.total;
+                }
+            }
+            catch (Exception e) { HRLog.Msg("estimation des défenseurs : " + e.Message); }
+            return Mathf.Max(1, Mathf.RoundToInt(points / 120f));
+        }
+
+        public static void End() => Current = null;
+
+        /// <summary>Points à imposer quand le générateur n'a pas reçu de points explicites (null = ne rien changer).</summary>
+        public static float? PointsFor(Map map, Faction rpFaction)
+        {
+            Context ctx = Begin(map, rpFaction);
+            return ctx?.points;
+        }
+    }
+
+    // ---------------------------------------------------------------- points des défenseurs : vanilla (GenStep_Settlement -> "settlement")
+    [HarmonyPatch(typeof(RimWorld.BaseGen.SymbolResolver_Settlement), nameof(RimWorld.BaseGen.SymbolResolver_Settlement.Resolve))]
+    public static class Patch_SettlementPoints
+    {
+        public static void Prefix(ref ResolveParams rp) => Apply(ref rp);
+
+        public static void Apply(ref ResolveParams rp)
+        {
+            try
+            {
+                if (rp.settlementDontGeneratePawns == true || rp.pawnGroupMakerParams != null || rp.settlementPawnGroupPoints.HasValue) return;
+                float? p = SettlementDefense.PointsFor(BaseGen.globalSettings.map, rp.faction);
+                if (p.HasValue) rp.settlementPawnGroupPoints = p.Value;
+            }
+            catch (Exception e) { Log.Warning("[Hardened Raids] settlement defenders: " + e.Message); }
+        }
+    }
+
+    // ---------------------------------------------------------------- KCSG (Vanilla Expanded Framework) : même champ settlementPawnGroupPoints
+    [HarmonyPatch]
+    public static class Patch_SettlementPointsKCSG
+    {
+        public static bool Prepare() => TargetMethod() != null;
+
+        public static MethodBase TargetMethod()
+        {
+            Type t = AccessTools.TypeByName("KCSG.SymbolResolver_Settlement");
+            return t == null ? null : AccessTools.Method(t, "Resolve", new[] { typeof(ResolveParams) });
+        }
+
+        public static void Prefix(ref ResolveParams rp) => Patch_SettlementPoints.Apply(ref rp);
+    }
+
+    // ---------------------------------------------------------------- MapGenUtility.GeneratePawns (GenStep_SettlementPawnsLoot et mods)
+    [HarmonyPatch(typeof(MapGenUtility), nameof(MapGenUtility.GeneratePawns))]
+    public static class Patch_SettlementPointsMapGen
+    {
+        public static void Prefix(Map map, Faction faction, PawnGroupKindDef pawnGroupKindDef, PawnGroupMakerParms pawnGroupMakerParams, ref float? points)
+        {
+            try
+            {
+                if (pawnGroupMakerParams != null || points.HasValue) return;
+                if (pawnGroupKindDef != null && pawnGroupKindDef != PawnGroupKindDefOf.Settlement) return;
+                float? p = SettlementDefense.PointsFor(map, faction);
+                if (p.HasValue) points = p.Value;
+            }
+            catch (Exception e) { Log.Warning("[Hardened Raids] settlement defenders: " + e.Message); }
+        }
+    }
+
+    // ---------------------------------------------------------------- tourelles de la défense périphérique
+    /// <summary>
+    /// SymbolResolver_EdgeDefense (et sa version KCSG) empile des « edgeThing » mini-tourelle : on les reprend sur la pile
+    /// de BaseGen (API publique Pop / Push) pour changer de modèle, et on en ajoute selon le palier.
+    /// Dosage : même nombre que vanilla (≈ 1 pour 30 cases de périmètre, 4-5 pour une colonie standard), + 1 par palier
+    /// au-dessus de T2, au plus le double de vanilla. Elles ne coûtent pas de points (comme les tourelles vanilla) ;
+    /// les tourelles servies sont limitées à 1 pour 10 défenseurs prévus, sinon on prend une tourelle automatique.
+    /// </summary>
+    public static class SettlementTurrets
+    {
+        private static readonly SymbolResolver_EdgeThing tester = new SymbolResolver_EdgeThing();
+
+        public static void Prefix(out int __state) => __state = BaseGen.symbolStack?.Count ?? 0;
+
+        public static void Postfix(int __state)
+        {
+            SettlementDefense.Context ctx = SettlementDefense.Current;
+            if (ctx == null || !HRSettings.SettlementTurrets || ctx.map != BaseGen.globalSettings.map) return;
+            if (ctx.faction.def.techLevel < TechLevel.Industrial) return;   // vanilla : pas de tourelles en dessous
+            try { Rework(ctx, __state); }
+            catch (Exception e) { Log.Warning("[Hardened Raids] settlement turrets: " + e); }
+        }
+
+        private static bool Replaceable(ThingDef d) => d != null && (d == ThingDefOf.Turret_MiniTurret || d == ThingDefOf.Turret_AutoMiniTurret);
+
+        private static bool Manned(ThingDef d) => d.HasComp(typeof(CompMannable));
+
+        private static void Rework(SettlementDefense.Context ctx, int before)
+        {
+            SymbolStack stack = BaseGen.symbolStack;
+            int n = stack.Count - before;
+            if (n <= 0) return;
+            var pushed = new List<SymbolStack.Element>(n);
+            for (int i = 0; i < n; i++) pushed.Add(stack.Pop());
+            pushed.Reverse();   // ordre d'empilement d'origine
+
+            var log = new List<string>();
+            try
+            {
+                List<int> idx = Enumerable.Range(0, pushed.Count).Where(i => pushed[i].symbol == "edgeThing" && Replaceable(pushed[i].resolveParams.singleThingDef)).ToList();
+                if (idx.Count == 0) return;
+                List<ThingDef> all = Patch_SiegeBlueprints.TurretDefsFor(ctx.faction, 3);
+                List<ThingDef> kit = Patch_SiegeBlueprints.ChooseKit(all, ctx.tierX);
+                if (kit.Count == 0) return;
+                List<ThingDef> autos = all.Where(d => !Manned(d)).ToList();
+                ThingDef autoPick = Patch_SiegeBlueprints.PickWeighted(autos, ctx.tierX);
+
+                ThingDef Choose(int k, ResolveParams rp, ThingDef fallback)
+                {
+                    var cands = new List<ThingDef> { kit[k % kit.Count] };
+                    if (kit.Count > 1) cands.Add(kit[(k + 1) % kit.Count]);
+                    if (autoPick != null) cands.Add(autoPick);
+                    foreach (ThingDef d in cands)
+                    {
+                        if (Manned(d) && ctx.mannedLeft <= 0) continue;
+                        ResolveParams test = rp;
+                        test.singleThingDef = d;
+                        if (!tester.CanResolve(test)) continue;
+                        if (Manned(d)) ctx.mannedLeft--;
+                        ctx.turretDefs.Add(d);
+                        return d;
+                    }
+                    return fallback;
+                }
+
+                int k0 = 0;
+                foreach (int i in idx)
+                {
+                    SymbolStack.Element e = pushed[i];
+                    ThingDef d = Choose(k0++, e.resolveParams, e.resolveParams.singleThingDef);
+                    e.resolveParams.singleThingDef = d;
+                    pushed[i] = e;
+                    log.Add(d.defName);
+                }
+                // en plus selon le palier : +1 par palier au-dessus de T2, au plus autant que vanilla
+                int extra = Mathf.Clamp(Mathf.FloorToInt(ctx.tierX - 2f), 0, idx.Count);
+                ResolveParams baseRp = pushed[idx[0]].resolveParams;
+                var extras = new List<ResolveParams>();
+                for (int j = 0; j < extra; j++)
+                {
+                    ThingDef d = Choose(k0++, baseRp, null);
+                    if (d == null) break;
+                    ResolveParams rp = baseRp;
+                    rp.singleThingDef = d;
+                    extras.Add(rp);
+                    log.Add("+" + d.defName);
+                }
+                foreach (SymbolStack.Element e in pushed) stack.Push(e.symbol, e.resolveParams);
+                pushed.Clear();
+                foreach (ResolveParams rp in extras) stack.Push("edgeThing", rp);
+                HRLog.Msg($"colonie {ctx.faction.Name} : tourelles périphériques {string.Join(", ", log)} (servies restantes {ctx.mannedLeft})");
+            }
+            finally
+            {
+                // en cas d'erreur (ou rien à changer) : tout ce qui a été retiré est remis tel quel
+                foreach (SymbolStack.Element e in pushed) stack.Push(e.symbol, e.resolveParams);
+            }
+        }
+
+        /// <summary>Après la génération : plein des tourelles posées, servants pris parmi les défenseurs, munitions au sol.</summary>
+        public static void AfterGeneration(SettlementDefense.Context ctx, List<Pawn> defenders)
+        {
+            if (ctx.turretDefs.Count == 0) return;
+            Map map = ctx.map;
+            var turrets = map.listerBuildings.allBuildingsNonColonist.OfType<Building_Turret>()
+                .Where(t => t.Faction == ctx.faction && ctx.turretDefs.Contains(t.def)).ToList();
+            int manned = 0;
+            foreach (Building_Turret t in turrets)
+            {
+                CompRefuelable fuel = t.GetComp<CompRefuelable>();
+                if (fuel != null && fuel.Fuel < fuel.Props.fuelCapacity) fuel.Refuel(fuel.Props.fuelCapacity - fuel.Fuel);
+                if (t.GetComp<CompMannable>() == null) continue;
+                Pawn man = defenders.Where(p => !p.kindDef.factionLeader).OrderBy(p => (p.Position - t.Position).LengthHorizontalSquared).FirstOrDefault();
+                if (man == null) continue;
+                defenders.Remove(man);
+                man.GetLord()?.RemovePawn(man);
+                LordMaker.MakeNewLord(ctx.faction, new LordJob_ManTurrets(), map, new[] { man });
+                try { MapComponent_HostileTurretSupply.DropAmmoNear(t, 3); } catch (Exception e) { HRLog.Msg("munitions de tourelle : " + e.Message); }
+                manned++;
+            }
+            HRLog.Msg($"colonie {ctx.faction.Name} : {turrets.Count} tourelle(s) des mods, {manned} servie(s)");
+        }
+    }
+
+    [HarmonyPatch(typeof(SymbolResolver_EdgeDefense), nameof(SymbolResolver_EdgeDefense.Resolve))]
+    public static class Patch_SettlementEdgeTurrets
+    {
+        public static void Prefix(out int __state) => SettlementTurrets.Prefix(out __state);
+        public static void Postfix(int __state) => SettlementTurrets.Postfix(__state);
+    }
+
+    /// <summary>KCSG : SymbolResolver_EdgeDefenseCustomizable (tourelles choisies par le plan ; seules les mini-tourelles vanilla sont remplacées).</summary>
+    [HarmonyPatch]
+    public static class Patch_SettlementEdgeTurretsKCSG
+    {
+        public static bool Prepare() => TargetMethod() != null;
+
+        public static MethodBase TargetMethod()
+        {
+            Type t = AccessTools.TypeByName("KCSG.SymbolResolver_EdgeDefenseCustomizable");
+            return t == null ? null : AccessTools.Method(t, "Resolve", new[] { typeof(ResolveParams) });
+        }
+
+        public static void Prefix(out int __state) => SettlementTurrets.Prefix(out __state);
+        public static void Postfix(int __state) => SettlementTurrets.Postfix(__state);
+    }
+
+    // ---------------------------------------------------------------- fin de génération de la carte
+    [HarmonyPatch(typeof(MapGenerator), nameof(MapGenerator.GenerateMap))]
+    public static class Patch_SettlementAfterGen
+    {
+        public static void Postfix(Map __result)
+        {
+            SettlementDefense.Context ctx = SettlementDefense.Current;
+            if (ctx == null) return;
+            SettlementDefense.End();
+            if (__result == null || ctx.map != __result) return;
+            try
+            {
+                // défenseurs : pawns humains de la faction, valides, dans un lord de défense de base
+                List<Pawn> defenders = __result.mapPawns.SpawnedPawnsInFaction(ctx.faction)
+                    .Where(p => p.RaceProps.Humanlike && !p.Downed && !p.Dead && IsDefendLord(p.GetLord()?.LordJob)).ToList();
+                SettlementTurrets.AfterGeneration(ctx, defenders);
+                if (HRSettings.SettlementVehicles && VehicleGate.Active && ctx.faction.def.techLevel >= TechLevel.Industrial
+                    && ctx.tierX >= HRSettings.VehicleMinTier)
+                    SettlementVehicles.Park(ctx, defenders);
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] settlement defense: " + e);
+            }
+        }
+
+        // LordJob_DefendBase vanilla, ou LordJob_DefendBaseNoEat de KCSG
+        private static bool IsDefendLord(LordJob j) => j != null && (j is LordJob_DefendBase || j.GetType().Name.StartsWith("LordJob_DefendBase"));
+
+        public static void Finalizer(Exception __exception)
+        {
+            if (__exception != null) SettlementDefense.End();   // génération ratée : pas de contexte résiduel
+        }
+    }
+}
