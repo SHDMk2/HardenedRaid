@@ -124,7 +124,7 @@ namespace HardenedRaids
         public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) =>
             PointsPatches.ReplaceCap(instructions, "MechClusterGenerator.GenerateClusterSketch");
 
-        public static void Prefix(float points)
+        public static void Prefix(float points, out bool __state)
         {
             RestoreTurrets();
             float factor = HRSettings.ClusterTurretCostFactor;
@@ -136,22 +136,14 @@ namespace HardenedRaids
                     d.building.combatPower *= factor;
                 }
             ApplySizeCurve(factor);
-            try
-            {
-                MechPricing.Apply(DefDatabase<PawnKindDef>.AllDefsListForReading.Where(MechClusterGenerator.MechKindSuitableForCluster), points);
-            }
-            catch (Exception e)
-            {
-                MechPricing.Restore();
-                Log.Warning("[Hardened Raids] mech cluster pricing: " + e.Message);
-            }
+            __state = MechPricing.Push(DefDatabase<PawnKindDef>.AllDefsListForReading.Where(MechClusterGenerator.MechKindSuitableForCluster), points);
             HRLog.Msg($"grappe mécanoïde : {points:F0} pts, tourelles ×{factor:F1}");
         }
 
-        public static void Finalizer()
+        public static void Finalizer(bool __state)
         {
             RestoreTurrets();
-            MechPricing.Restore();
+            if (__state) MechPricing.Pop();
         }
 
         private static void RestoreTurrets()

@@ -67,15 +67,17 @@ namespace HardenedRaids
         new[] { typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(List<Pawn>), typeof(bool) })]
     public static class Patch_GeneratePawns_Mechs
     {
-        public static void Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker)
+        public static void Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, out bool __state)
         {
             // raids et tout groupe mécanoïde hors raid (vaisseau écrasé, mécas endormis, quêtes…)
-            if (parms?.groupKind != PawnGroupKindDefOf.Combat) return;
-            try { MechPricing.Apply(parms, groupMaker); }
-            catch (Exception e) { MechPricing.Restore(); Log.Warning("[Hardened Raids] mechanoid pricing: " + e.Message); }
+            __state = parms?.groupKind == PawnGroupKindDefOf.Combat && MechPricing.Apply(parms, groupMaker);
         }
 
-        public static void Finalizer() => MechPricing.Restore();
+        // ne ferme que la portée ouverte par ce prefix (imbrication sûre)
+        public static void Finalizer(bool __state)
+        {
+            if (__state) MechPricing.Pop();
+        }
     }
 
     // ---------------------------------------------------------------- santé + implants (avant l'équipement)
