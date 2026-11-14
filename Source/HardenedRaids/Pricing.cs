@@ -219,8 +219,15 @@ namespace HardenedRaids
         {
             Restore();
             if (parms?.faction == null || parms.faction.def.humanlikeFaction || groupMaker?.options == null) return;
-            ArmorGate gate = ArmorGate.For(parms.points);
-            foreach (PawnKindDef k in groupMaker.options.Select(o => o.kind).Distinct())
+            Apply(groupMaker.options.Select(o => o.kind), parms.points);
+        }
+
+        /// <summary>Prix / blocage des mécanoïdes blindés parmi ces pawnkinds (groupes et grappes).</summary>
+        public static void Apply(IEnumerable<PawnKindDef> kinds, float points)
+        {
+            Restore();
+            ArmorGate gate = ArmorGate.For(points);
+            foreach (PawnKindDef k in kinds.Distinct())
             {
                 if (!IsHeavy(k)) continue;
                 saved[k] = k.combatPower;
@@ -228,7 +235,7 @@ namespace HardenedRaids
                 else k.combatPower *= HRSettings.HeavyMechCostFactor;
             }
             if (saved.Count > 0)
-                HRLog.Msg($"mécanoïdes blindés ({parms.points:F0} pts) : " + string.Join(", ", saved.Keys.Select(k => k.combatPower >= 1e6f ? $"{k.defName} bloqué" : $"{k.defName} {k.combatPower:F0} pts")));
+                HRLog.Msg($"mécanoïdes blindés ({points:F0} pts) : " + string.Join(", ", saved.Keys.Select(k => k.combatPower >= 1e6f ? $"{k.defName} bloqué" : $"{k.defName} {k.combatPower:F0} pts")));
         }
 
         public static void Restore()

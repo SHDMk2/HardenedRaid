@@ -69,7 +69,8 @@ namespace HardenedRaids
     {
         public static void Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker)
         {
-            if (parms?.groupKind != PawnGroupKindDefOf.Combat || RaidContext.Parms == null) return;
+            // raids et tout groupe mécanoïde hors raid (vaisseau écrasé, mécas endormis, quêtes…)
+            if (parms?.groupKind != PawnGroupKindDefOf.Combat) return;
             try { MechPricing.Apply(parms, groupMaker); }
             catch (Exception e) { MechPricing.Restore(); Log.Warning("[Hardened Raids] mechanoid pricing: " + e.Message); }
         }

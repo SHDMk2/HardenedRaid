@@ -18,7 +18,11 @@ namespace HardenedRaids
         public static float MaxPoints() => HRSettings.UncapPoints ? float.MaxValue : 10000f;
 
         // Remplace la constante 10000 du Mathf.Clamp final par MaxPoints()
-        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions) =>
+            ReplaceCap(instructions, "DefaultThreatPointsNow");
+
+        /// <summary>Remplace la première constante 10000f de la méthode par un appel à MaxPoints().</summary>
+        public static IEnumerable<CodeInstruction> ReplaceCap(IEnumerable<CodeInstruction> instructions, string where)
         {
             bool done = false;
             foreach (CodeInstruction ins in instructions)
@@ -31,7 +35,7 @@ namespace HardenedRaids
                 }
                 yield return ins;
             }
-            if (!done) Log.Error("[Hardened Raids] 10000 cap not found in DefaultThreatPointsNow: points uncapping is inactive.");
+            if (!done) Log.Error($"[Hardened Raids] 10000 cap not found in {where}: points uncapping is inactive there.");
         }
 
         /// <summary>Ajoute (ou retire) un point lointain qui prolonge la pente du dernier segment.</summary>

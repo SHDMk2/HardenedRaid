@@ -32,7 +32,8 @@ namespace HardenedRaids
         public int ncos, officers; // grades de cette vague
         public ArmorGate gate;
 
-        public static RaidPlan Make(FactionDef f, float points, float? xOverride, int? countOverride, bool needBreacher, System.Random rng)
+        /// <param name="allowWaves">false hors raid (navette écrasée, embuscade, site…) : une seule vague, plafonnée.</param>
+        public static RaidPlan Make(FactionDef f, float points, float? xOverride, int? countOverride, bool needBreacher, System.Random rng, bool allowWaves = true)
         {
             float x = xOverride ?? Tiers.TierX(f, points);
             if (x < 1f) return null;
@@ -59,6 +60,7 @@ namespace HardenedRaids
             {
                 p.total = Mathf.Max(1, Mathf.FloorToInt(points / avg));
                 int cap = Tiers.WaveCapFor(f);
+                if (!allowWaves) p.total = Mathf.Min(p.total, cap);
                 // un reste de moins de 10 % est absorbé par la vague, pas de mini-vague inutile
                 p.waves = p.total > cap * 1.1f ? Mathf.CeilToInt(p.total / (float)cap) : 1;
                 p.thisWave = Mathf.CeilToInt(p.total / (float)p.waves);
@@ -133,10 +135,12 @@ namespace HardenedRaids
     {
         public static bool Applies(PawnGroupMakerParms parms)
         {
-            if (!HRSettings.EnableTiers || RaidContext.Parms == null) return false;
+            // raids, mais aussi tout groupe hostile hors raid : quêtes (navette écrasée…), embuscades,
+            // rançons de caravane, défenseurs de sites et de colonies, pourparlers ratés
+            if (!HRSettings.EnableTiers) return false;
             Faction f = parms.faction;
             if (f == null || f.IsPlayer || !f.def.humanlikeFaction || !f.HostileTo(Faction.OfPlayer)) return false;
-            if (parms.groupKind != PawnGroupKindDefOf.Combat) return false;
+            if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return false;
             return true;
         }
 
@@ -150,7 +154,8 @@ namespace HardenedRaids
 
         public static bool TryGenerate(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns)
         {
-            WaveEntry wave = RaidContext.PendingWave;
+            bool inRaid = RaidContext.Parms != null;
+            WaveEntry wave = inRaid ? RaidContext.PendingWave : null;
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out Func<PawnKindDef, bool> isRequired);
             var rng = new System.Random(Rand.Int);
             float tierX = wave?.tierX ?? Tiers.TierX(parms.faction.def, parms.points);
@@ -159,7 +164,7 @@ namespace HardenedRaids
             // ---- véhicules (partie 2) : achetés sur le budget du raid, avant l'infanterie
             float infantryPoints = parms.points;
             List<ThingDef> vehicles = null;
-            if (HRSettings.EnableVehicles && VehicleGate.Active && !RaidContext.DebugTest && VehicleGate.ArrivalOk(RaidContext.Parms?.raidArrivalMode)
+            if (inRaid && HRSettings.EnableVehicles && VehicleGate.Active && !RaidContext.DebugTest && VehicleGate.ArrivalOk(RaidContext.Parms?.raidArrivalMode)
                 && parms.faction.def.techLevel >= TechLevel.Industrial)
             {
                 try
@@ -175,7 +180,7 @@ namespace HardenedRaids
                 }
             }
 
-            RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, needBreacher, rng);
+            RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, needBreacher, rng, allowWaves: inRaid);
             if (plan == null) return false;
 
             // ---- transports (payants) pour l'infanterie qui ne monte pas dans les blindés ; on refait le plan avec le reste
@@ -252,7 +257,7 @@ namespace HardenedRaids
             }
 
             // ---- vagues suivantes
-            if (plan.waves > 1 && wave == null && !RaidContext.DebugTest)
+            if (inRaid && plan.waves > 1 && wave == null && !RaidContext.DebugTest)
                 WaveScheduler.Schedule(plan, RaidContext.Parms);
 
             // ---- génération
@@ -274,7 +279,7 @@ namespace HardenedRaids
             }
 
             if (vehicles != null && vehicles.Count > 0 && outPawns.Count > 0) RaidContext.PendingVehicles = vehicles;
-            HRLog.Msg((wave != null ? $"vague {wave.index}/{wave.totalWaves} — " : "") + plan.Describe() +
+            HRLog.Msg((inRaid ? "" : $"hors raid ({parms.groupKind?.defName}) — ") + (wave != null ? $"vague {wave.index}/{wave.totalWaves} — " : "") + plan.Describe() +
                       $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}, coût réel ≈ {spent:F0} / {infantryPoints:F0} pts" +
                       (vehicles != null && vehicles.Count > 0 ? $", véhicules : {string.Join(", ", vehicles.Select(v => v.label))}" : ""));
             return outPawns.Count > 0;

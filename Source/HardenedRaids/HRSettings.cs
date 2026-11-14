@@ -25,6 +25,10 @@ namespace HardenedRaids
         public static float WaveDelayHoursMin = 2f;
         public static float WaveDelayHoursMax = 6f;
 
+        // --- Autres events ---
+        public static float AnimalRarityFloor = 0.10f;       // chance minimale des events animaux quand la menace les dépasse
+        public static float ClusterTurretCostFactor = 3f;    // prix des tourelles de grappe mécanoïde
+
         // --- IA ---
         public static bool SmarterStrategies = true;
         public static bool VeteransAvoidTurrets = true;
@@ -70,6 +74,8 @@ namespace HardenedRaids
             Scribe_Values.Look(ref CapLowTech, "CapLowTech", 300);
             Scribe_Values.Look(ref WaveDelayHoursMin, "WaveDelayHoursMin", 2f);
             Scribe_Values.Look(ref WaveDelayHoursMax, "WaveDelayHoursMax", 6f);
+            Scribe_Values.Look(ref AnimalRarityFloor, "AnimalRarityFloor", 0.10f);
+            Scribe_Values.Look(ref ClusterTurretCostFactor, "ClusterTurretCostFactor", 3f);
             Scribe_Values.Look(ref SmarterStrategies, "SmarterStrategies", true);
             Scribe_Values.Look(ref VeteransAvoidTurrets, "VeteransAvoidTurrets", true);
             Scribe_Values.Look(ref IgnoreDeadTurrets, "IgnoreDeadTurrets", true);
@@ -148,6 +154,14 @@ namespace HardenedRaids
             l.CheckboxLabeled(Strings.T("VerboseLog"), ref VerboseLog);
 
             l.NewColumn();
+            l.Label(Strings.T("SecEvents"));
+            l.Label(Strings.T("AnimalCap", AnimalCaps.MaxAnimals));
+            AnimalRarityFloor = Mathf.Round(l.SliderLabeled(Strings.T("AnimalRarity", AnimalRarityFloor.ToString("P0")), AnimalRarityFloor, 0f, 1f, 0.5f,
+                Strings.T("AnimalRarityTip")) * 20f) / 20f;
+            ClusterTurretCostFactor = Mathf.Round(l.SliderLabeled(Strings.T("ClusterTurrets", ClusterTurretCostFactor.ToString("F2")), ClusterTurretCostFactor, 1f, 6f, 0.5f,
+                Strings.T("ClusterTurretsTip")) * 4f) / 4f;
+            l.GapLine();
+
             l.Label(Strings.T("SecAI"));
             l.CheckboxLabeled(Strings.T("Smarter"), ref SmarterStrategies);
             l.CheckboxLabeled(Strings.T("AvoidTurrets"), ref VeteransAvoidTurrets);

@@ -43,6 +43,13 @@ namespace HardenedRaids
             ["WaveMin"] = "Min delay between waves: {0} h",
             ["WaveMax"] = "Max delay between waves: {0} h",
 
+            ["SecEvents"] = "<b>Other events</b>",
+            ["AnimalCap"] = "Max animals per manhunter pack: {0} (same as neolithic wave cap)",
+            ["AnimalRarity"] = "Animal events minimum chance: {0}",
+            ["AnimalRarityTip"] = "Manhunter packs and mass animal insanity can't spend unlimited points. When the threat exceeds what they can use, their chance drops in proportion (points they can use ÷ colony points), down to this floor. Never removed.",
+            ["ClusterTurrets"] = "Mech cluster turret price: ×{0}",
+            ["ClusterTurretsTip"] = "Cluster turrets are cheap in vanilla (mini-turret = a scavenger). Higher = fewer turrets for the same points. The cluster also grows with points.",
+
             ["SecAI"] = "<b>AI</b>",
             ["Smarter"] = "Smarter strategies at high tiers (smart, breach, sappers)",
             ["AvoidTurrets"] = "Veterans (T2+) avoid turret fields of fire",
@@ -112,6 +119,13 @@ namespace HardenedRaids
             ["CapLow"] = "Raiders max par vague (néolithique/médiéval) : {0}",
             ["WaveMin"] = "Délai min entre vagues : {0} h",
             ["WaveMax"] = "Délai max entre vagues : {0} h",
+
+            ["SecEvents"] = "<b>Autres events</b>",
+            ["AnimalCap"] = "Bêtes max par meute enragée : {0} (même plafond que les vagues néolithiques)",
+            ["AnimalRarity"] = "Chance minimale des events animaux : {0}",
+            ["AnimalRarityTip"] = "Les meutes enragées et la folie animale de masse ne peuvent pas dépenser des points sans limite. Quand la menace dépasse ce qu'elles peuvent utiliser, leur chance baisse d'autant (points utilisables ÷ points de la colonie), jusqu'à ce plancher. Jamais supprimées.",
+            ["ClusterTurrets"] = "Prix des tourelles de grappe mécanoïde : ×{0}",
+            ["ClusterTurretsTip"] = "Les tourelles de grappe sont bon marché en vanilla (mini-tourelle = un scavenger). Plus haut = moins de tourelles pour les mêmes points. La grappe grandit aussi avec les points.",
 
             ["SecAI"] = "<b>IA</b>",
             ["Smarter"] = "Stratégies plus intelligentes selon le palier (smart, brèche, sape)",
