@@ -107,16 +107,24 @@ namespace HardenedRaids
         public List<ThingDef> implants;
         public ThingDef brain;
         public System.Random rng;
+        public int depth;                  // profondeur de PawnGenerator.GeneratePawn à laquelle CE raider est généré
+        public Pawn freshPawn;             // dernier pawn neuf passé par GenerateInitialHediffs (sinon : pawn du monde rhabillé)
+        public List<ThingDef> installed;   // pièces réellement posées par nous (dotation, membres remplacés)
+        public List<ThingDef> required;    // pièces imposées par le pawnkind (techHediffsRequired) réellement posées, facturées
+        public bool requiredBreacher;      // exigé par la stratégie (brèche / sape) : arme destructrice
+        public bool sapperRaid;            // raid de sape : le sapeur doit savoir creuser (validateur vanilla)
     }
 
     public static class GenContext
     {
         public static Slot Current;
+        /// <summary>Profondeur d'imbrication de PawnGenerator.GeneratePawn (les proches générés pendant un raider sont plus profonds).</summary>
+        public static int Depth;
 
         public static Slot For(Pawn p)
         {
             Slot s = Current;
-            if (s == null || p == null || p.kindDef != s.kind || p.Faction != s.faction) return null;
+            if (s == null || p == null || Depth != s.depth || p.kindDef != s.kind || p.Faction != s.faction) return null;
             return s;
         }
     }
@@ -329,6 +337,7 @@ namespace HardenedRaids
             if (!Find.Storyteller.difficulty.ChildRaidersAllowed) request.AllowedDevelopmentalStages = DevelopmentalStage.Adult;
 
             Pawn pawn;
+            s.depth = GenContext.Depth + 1;   // GeneratePawn incrémente la profondeur : les proches générés dedans sont à +2
             GenContext.Current = s;
             try
             {
