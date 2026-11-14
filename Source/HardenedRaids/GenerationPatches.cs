@@ -149,6 +149,7 @@ namespace HardenedRaids
             Slot s = GenContext.For(pawn);
             if (s == null || !s.tier.healthy) return;
             CECompat.EnsureAmmo(pawn);
+            if (s.sapperRaid) PawnTuning.EnsureSapperSkill(pawn, s);
             try { PawnTuning.DropBlockingApparel(pawn); }
             catch (Exception e) { Log.Warning("[Hardened Raids] shield/weapon check of " + pawn + " : " + e.Message); }
         }

@@ -252,8 +252,9 @@ namespace HardenedRaids
                     tierIndex = ti, tier = ladder[ti], loadout = g.loadout, role = Role.Main, rank = Rank.Soldier, rng = rng,
                 });
             }
-            AssignRoles(slots.Where(s => s.loadout == plan.core?.loadout).ToList(), isRequired);
-            AssignRoles(slots.Where(s => s.loadout == plan.troop.loadout).ToList(), isRequired);
+            MarkRequiredBreachers(slots, parms, isRequired);
+            AssignRoles(slots.Where(s => s.loadout == plan.core?.loadout).ToList());
+            AssignRoles(slots.Where(s => s.loadout == plan.troop.loadout).ToList());
 
             // ---- grades (chef d'abord, puis noyau) : 1 officier / 100, 1 sous-officier / 10 ; implants tirés ici pour le prix
             int nOff = Pricing.OfficerCount(slots.Count), nNco = Pricing.NcoCount(slots.Count);
@@ -274,7 +275,8 @@ namespace HardenedRaids
             bool allowFood = parms.raidStrategy == null || parms.raidStrategy.pawnsCanBringFood || (parms.faction != null && !parms.faction.HostileTo(Faction.OfPlayer));
             Predicate<Pawn> validator = parms.raidStrategy != null ? (Pawn p) => parms.raidStrategy.Worker.CanUsePawn(parms.points, p, outPawns) : null;
             bool downedDone = false;
-            foreach (Slot s in slots)
+            // les pawns exigés par la stratégie d'abord : le validateur de sape veut un sapeur en premier
+            foreach (Slot s in slots.OrderByDescending(x => x.requiredBreacher).ToList())
             {
                 Pawn pawn = GenerateOne(s, parms, allowFood, validator);
                 if (pawn == null) continue;
@@ -296,20 +298,44 @@ namespace HardenedRaids
             return outPawns.Count > 0;
         }
 
-        private static void AssignRoles(List<Slot> group, Func<PawnKindDef, bool> isRequired)
+        private static readonly System.Reflection.MethodInfo minRequired =
+            HarmonyLib.AccessTools.Method(typeof(RaidStrategyWorker_WithRequiredPawnKinds), "MinRequiredPawnsForPoints");
+
+        /// <summary>Nombre de pawns exigés par la stratégie, comme vanilla (sape : 1 ; brèche : 1 à 4 selon les points).</summary>
+        private static int RequiredCount(PawnGroupMakerParms parms)
+        {
+            if (parms.raidStrategy?.Worker is not RaidStrategyWorker_WithRequiredPawnKinds w) return 0;
+            try { return minRequired != null ? (int)minRequired.Invoke(w, new object[] { parms.points, parms.faction }) : 1; }
+            catch { return 1; }
+        }
+
+        /// <summary>
+        /// Brèche / sape : seul le nombre de pawns exigé par vanilla (MinRequiredPawnsForPoints) reçoit d'office l'arme destructrice ;
+        /// la part de brèche normale du palier s'y ajoute ensuite (AssignRoles). Le chef n'est pris qu'en dernier recours.
+        /// </summary>
+        private static void MarkRequiredBreachers(List<Slot> slots, PawnGroupMakerParms parms, Func<PawnKindDef, bool> isRequired)
+        {
+            if (isRequired == null) return;
+            bool sappers = parms.raidStrategy?.Worker is RaidStrategyWorker_ImmediateAttackSappers;
+            foreach (Slot s in slots) s.sapperRaid = sappers;
+            int n = RequiredCount(parms);
+            foreach (Slot s in slots.Where(s => isRequired(s.kind)).OrderBy(s => s.kind.factionLeader).Take(Mathf.Max(0, n)))
+            {
+                s.role = Role.Breacher;
+                s.requiredBreacher = true;
+            }
+        }
+
+        private static void AssignRoles(List<Slot> group)
         {
             if (group.Count == 0) return;
             TierDef t = group[0].tier;
-            // les pawns exigés par une stratégie de brèche/sape portent une arme destructrice
-            if (isRequired != null)
-                foreach (Slot s in group.Where(s => isRequired(s.kind))) s.role = Role.Breacher;
-
             void Fill(Role r, float share)
             {
                 if (share <= 0f) return;
                 int n = Mathf.RoundToInt(group.Count * share);
                 if (n == 0 && group.Count >= 6) n = 1;
-                n -= group.Count(s => s.role == r);
+                n -= group.Count(s => s.role == r && !s.requiredBreacher);   // les exigés par la stratégie sont en plus
                 foreach (Slot s in group.Where(s => s.role == Role.Main && !s.kind.factionLeader).Take(Mathf.Max(0, n))) s.role = r;
             }
             Fill(Role.Breacher, t.breacherShare);

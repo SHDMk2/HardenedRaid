@@ -277,6 +277,17 @@ namespace HardenedRaids
             Raise(pawn, other, Mathf.Max(0, s.tier.combatSkill.min - 4));
         }
 
+        /// <summary>
+        /// Raid de sape : le validateur vanilla (RaidStrategyWorker_ImmediateAttackSappers.CanUsePawn, après l'équipement) rejette
+        /// un pawnkind sapeur armé d'une arme destructrice qui creuse mal (minage &lt; 4) ; vanilla retire alors des pawns jusqu'à en
+        /// trouver un. On relève directement le minage au minimum requis (inutilisable si le skill est désactivé : vanilla retire).
+        /// </summary>
+        public static void EnsureSapperSkill(Pawn pawn, Slot s)
+        {
+            if (pawn.skills == null || !s.kind.canBeSapper) return;
+            Raise(pawn, SkillDefOf.Mining, 4);
+        }
+
         private static void Raise(Pawn pawn, SkillDef def, int level)
         {
             SkillRecord r = pawn.skills.GetSkill(def);
