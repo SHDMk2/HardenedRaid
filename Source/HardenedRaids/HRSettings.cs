@@ -152,6 +152,8 @@ namespace HardenedRaids
             if (WaveDelayHoursMax < WaveDelayHoursMin) WaveDelayHoursMax = WaveDelayHoursMin;
             l.GapLine();
             l.CheckboxLabeled(Strings.T("VerboseLog"), ref VerboseLog);
+            // --- lot S --- désactivation du mod (en partie seulement)
+            Uninstall.DrawButton(l);
 
             l.NewColumn();
             l.Label(Strings.T("SecEvents"));
