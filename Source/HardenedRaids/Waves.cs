@@ -60,11 +60,17 @@ namespace HardenedRaids
         }
     }
 
+    /// <summary>Vagues suivantes prévues pendant la génération, programmées seulement si le raid réussit.</summary>
+    public class WavePlan
+    {
+        public RaidPlan plan;
+    }
+
     public class GameComponent_Waves : GameComponent
     {
         public List<WaveEntry> pending = new List<WaveEntry>();
 
-        public GameComponent_Waves(Game game) { }
+        public GameComponent_Waves(Game game) { RaidContext.Reset(); }
 
         public override void ExposeData()
         {
@@ -92,7 +98,6 @@ namespace HardenedRaids
                 HRLog.Msg($"vague {w.index}/{w.totalWaves} annulée (carte ou faction plus valide).");
                 return;
             }
-            RaidContext.PendingWave = w;
             try
             {
                 if (!TryFire(w, w.arrival) && !TryFire(w, null))
@@ -100,7 +105,7 @@ namespace HardenedRaids
             }
             finally
             {
-                RaidContext.PendingWave = null;
+                RaidContext.NextWave = null;
             }
         }
 
@@ -111,6 +116,7 @@ namespace HardenedRaids
                 target = w.map, faction = w.faction, points = w.points, raidStrategy = w.strategy,
                 raidArrivalMode = arrival, forced = true,
             };
+            RaidContext.NextWave = w;   // attachée au cadre ouvert par ce raid (pas à un raid imbriqué)
             return IncidentDefOf.RaidEnemy.Worker.TryExecute(parms);
         }
     }

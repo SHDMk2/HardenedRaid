@@ -121,16 +121,6 @@ namespace HardenedRaids
         }
     }
 
-    /// <summary>Informations sur le raid en cours d'exécution (null hors raid).</summary>
-    public static class RaidContext
-    {
-        public static IncidentParms Parms;
-        public static bool DebugTest;
-        public static float PreAdjustPoints = -1f;
-        public static WaveEntry PendingWave;
-        public static List<ThingDef> PendingVehicles; // véhicules achetés pour ce raid, apparus après l'arrivée
-    }
-
     public static class RaidGenerator
     {
         public static bool Applies(PawnGroupMakerParms parms)

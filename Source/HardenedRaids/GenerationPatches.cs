@@ -10,23 +10,15 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(IncidentWorker_Raid), nameof(IncidentWorker_Raid.TryGenerateRaidInfo))]
     public static class Patch_TryGenerateRaidInfo
     {
-        public static void Prefix(IncidentParms parms, bool debugTest, out bool __state)
+        // pile de contextes : un raid déclenché pendant un autre a son propre cadre (Parms, points, vagues, véhicules…)
+        public static void Prefix(IncidentParms parms, bool debugTest, out RaidFrame __state)
         {
-            __state = RaidContext.Parms == null;      // raid imbriqué : on ne touche pas au contexte externe
-            if (!__state) return;
-            RaidContext.Parms = parms;
-            RaidContext.DebugTest = debugTest;
-            RaidContext.PreAdjustPoints = -1f;
-            RaidContext.PendingVehicles = null;
+            __state = RaidContext.Push(parms, debugTest);
         }
 
-        public static void Finalizer(bool __state)
+        public static void Finalizer(RaidFrame __state)
         {
-            if (!__state) return;
-            RaidContext.Parms = null;
-            RaidContext.DebugTest = false;
-            RaidContext.PreAdjustPoints = -1f;
-            RaidContext.PendingVehicles = null;
+            RaidContext.Pop(__state);
         }
     }
 
