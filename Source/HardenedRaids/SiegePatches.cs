@@ -15,6 +15,46 @@ namespace HardenedRaids
     /// Tout passe par SiegeBlueprintPlacer.PlaceBlueprints : vanilla livre les matériaux par capsule ;
     /// les munitions des tourelles sont fournies par <see cref="MapComponent_HostileTurretSupply"/>.
     /// </summary>
+    /// <summary>
+    /// Palier du camp de siège = palier forcé du raid (A5), pas les points du lord. Retenu par lord de siège (table
+    /// faible, non sauvegardée) et lu pendant LordToil_Siege.Init, où les plans sont posés.
+    /// </summary>
+    public static class SiegeTier
+    {
+        private class Box { public float x; }
+        private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Verse.AI.Group.LordJob, Box> byJob =
+            new System.Runtime.CompilerServices.ConditionalWeakTable<Verse.AI.Group.LordJob, Box>();
+
+        /// <summary>Palier du siège dont on pose le camp, -1 sinon.</summary>
+        public static float Current = -1f;
+
+        /// <summary>À appeler par qui crée un LordJob_Siege dont le palier est connu (raid, équipe d'appui).</summary>
+        public static void Register(Verse.AI.Group.LordJob job, float tierX)
+        {
+            if (job == null || tierX <= 0f) return;
+            byJob.Remove(job);
+            byJob.Add(job, new Box { x = tierX });
+        }
+
+        public static float For(Verse.AI.Group.LordJob job) => job != null && byJob.TryGetValue(job, out Box b) ? b.x : -1f;
+    }
+
+    [HarmonyPatch(typeof(RaidStrategyWorker_Siege), "MakeLordJob")]
+    public static class Patch_SiegeLordTier
+    {
+        public static void Postfix(IncidentParms parms, Verse.AI.Group.LordJob __result)
+        {
+            if (__result is LordJob_Siege) SiegeTier.Register(__result, RaidContext.TierXFor(parms));
+        }
+    }
+
+    [HarmonyPatch(typeof(LordToil_Siege), nameof(LordToil_Siege.Init))]
+    public static class Patch_SiegeInitTier
+    {
+        public static void Prefix(LordToil_Siege __instance) => SiegeTier.Current = SiegeTier.For(__instance.lord?.LordJob);
+        public static void Finalizer() => SiegeTier.Current = -1f;
+    }
+
     [HarmonyPatch(typeof(SiegeBlueprintPlacer), nameof(SiegeBlueprintPlacer.PlaceBlueprints))]
     public static class Patch_SiegeBlueprints
     {
@@ -37,8 +77,9 @@ namespace HardenedRaids
                 yield return b;
             }
 
+            // palier forcé du raid (SiegeTier) ; à défaut (camp posé après un rechargement…), estimé depuis
             // blueprintPoints = points du raid × 0.2-0.3 (RaidStrategyWorker_Siege / équipe d'appui)
-            float x = Tiers.TierX(faction.def, blueprintPoints * 4f);
+            float x = SiegeTier.Current >= 0f ? SiegeTier.Current : Tiers.TierX(faction.def, blueprintPoints * 4f);
             IntVec3 target = ThreatTarget(map, center);
             Rot4 facing = Rot4.FromAngleFlat((target - center).AngleFlat);
             var extras = new List<Blueprint_Build>();

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using RimWorld;
 using Verse;
@@ -33,10 +34,25 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(IncidentWorker_Raid), nameof(IncidentWorker_Raid.AdjustedRaidPoints))]
     public static class Patch_AdjustedRaidPoints
     {
-        public static void Prefix(float points)
+        public static bool Prefix(float points, RaidStrategyDef raidStrategy, Faction faction, PawnGroupKindDef groupKind, ref float __result)
         {
-            if (RaidContext.Parms != null && RaidContext.PreAdjustPoints < 0f) RaidContext.PreAdjustPoints = points;
+            RaidFrame f = RaidContext.Current;
+            if (f?.Parms == null || f.PreAdjustPoints >= 0f) return true;
+            f.PreAdjustPoints = points;
+            // vague différée : ses points sont déjà ajustés (part exacte du raid d'origine, même si la stratégie a changé)
+            WaveEntry w = f.Wave;
+            if (w == null || w.adjustedPoints <= 0f) return true;
+            float min = raidStrategy?.Worker != null ? raidStrategy.Worker.MinimumPoints(faction, groupKind) * 1.05f : 0f;
+            __result = Math.Max(w.adjustedPoints, min);
+            return false;
         }
+    }
+
+    /// <summary>Vague différée : même restriction d'âge que le raid d'origine (pas de nouveau tirage).</summary>
+    [HarmonyPatch(typeof(IncidentWorker_RaidEnemy), nameof(IncidentWorker_RaidEnemy.ResolveRaidAgeRestriction))]
+    public static class Patch_WaveAgeRestriction
+    {
+        public static bool Prefix() => RaidContext.PendingWave?.raidParms == null;
     }
 
     // ---------------------------------------------------------------- génération du groupe
@@ -86,7 +102,15 @@ namespace HardenedRaids
         {
             // raids et tout groupe mécanoïde hors raid (vaisseau écrasé, mécas endormis, quêtes…)
             if (parms?.groupKind != PawnGroupKindDefOf.Combat) return;
-            try { MechPricing.Apply(parms, groupMaker); }
+            // vague différée : plafond d'armure du raid entier, pas de ses seuls points (A5)
+            float gatePoints = RaidContext.PendingWave?.gatePoints ?? -1f;
+            try
+            {
+                if (gatePoints > 0f && parms.faction != null && !parms.faction.def.humanlikeFaction && groupMaker?.options != null
+                    && parms.faction == RaidContext.Parms?.faction)
+                    MechPricing.Apply(groupMaker.options.Select(o => o.kind), gatePoints);
+                else MechPricing.Apply(parms, groupMaker);
+            }
             catch (Exception e) { MechPricing.Restore(); Log.Warning("[Hardened Raids] mechanoid pricing: " + e.Message); }
         }
 

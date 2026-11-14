@@ -34,7 +34,10 @@ namespace HardenedRaids
         public float frac;     // part du noyau (palier haut)
 
         /// <param name="allowWaves">false hors raid (navette écrasée, embuscade, site…) : une seule vague, plafonnée.</param>
-        public static RaidPlan Make(FactionDef f, float points, float? xOverride, int? countOverride, bool needBreacher, System.Random rng, bool allowWaves = true)
+        /// <param name="rng">sert uniquement aux dotations : même graine = même dotation (vagues d'un même raid).</param>
+        /// <param name="gateGiven">true : <paramref name="gate"/> (null = sans plafond) est le plafond d'armure du raid entier.</param>
+        public static RaidPlan Make(FactionDef f, float points, float? xOverride, int? countOverride, bool needBreacher, System.Random rng, bool allowWaves = true,
+                                    ArmorGate gate = null, bool gateGiven = false)
         {
             float x = xOverride ?? Tiers.TierX(f, points);
             if (x < 1f) return null;
@@ -44,7 +47,7 @@ namespace HardenedRaids
             float frac = lo == hi ? 0f : Mathf.Clamp01(x - lo);
 
             // dotations d'abord : le prix d'un raider dépend de ce qu'il porte
-            ArmorGate gate = ArmorGate.For(points);
+            if (!gateGiven) gate = ArmorGate.For(points);
             Loadout loLoadout = Loadouts.BuildLoadout(f, ladder[lo], needBreacher, rng, gate);
             Loadout hiLoadout = lo == hi ? loLoadout : Loadouts.BuildLoadout(f, ladder[hi], needBreacher, rng, gate);
             float loPrice = Pricing.ExpectedPrice(f, ladder[lo], lo, loLoadout);
@@ -165,6 +168,16 @@ namespace HardenedRaids
             var rng = new System.Random(Rand.Int);
             float tierX = wave?.tierX ?? Tiers.TierX(parms.faction.def, parms.points);
             if (tierX < 1f) return false;
+            if (inRaid) frame.TierX = tierX;
+
+            // ---- même dotation sur toutes les vagues (A5) : graine des dotations et plafond d'armure du raid entier
+            bool sameLoadout = wave != null && wave.sameLoadout;
+            int loadoutSeed = sameLoadout ? wave.loadoutSeed : rng.Next();
+            bool loadoutBreacher = sameLoadout ? wave.needBreacher : needBreacher;
+            ArmorGate gate = null;
+            bool gateGiven = wave != null ? wave.TryGetGate(out gate) : true;
+            if (wave == null) gate = ArmorGate.For(parms.points);
+            System.Random LoadoutRng() => new System.Random(loadoutSeed);
 
             // ---- véhicules : planifiés UNE fois pour tout le raid (budget sur ses points totaux), puis répartis sur
             //      les vagues ; chaque vague emporte sa part et son infanterie en déduit le coût (D4). Une vague 2+
@@ -196,7 +209,7 @@ namespace HardenedRaids
                 vehicles = wave.ResolveVehicles();
             }
 
-            RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, needBreacher, rng, allowWaves: inRaid);
+            RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, loadoutBreacher, LoadoutRng(), inRaid, gate, gateGiven);
             if (plan == null) return false;
 
             // ---- transports (payants) pour l'infanterie qui ne monte pas dans les blindés ; on refait le plan avec le reste
@@ -215,7 +228,7 @@ namespace HardenedRaids
                     if (transports.Count > 0 || vCost != vCost0)
                     {
                         infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - vCost - tCost);
-                        plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, needBreacher, rng) ?? plan;
+                        plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven) ?? plan;
                     }
                     waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped, out waveVehicleCost);
                     if (dropped > 0) HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague abandonné(s).");
@@ -299,7 +312,14 @@ namespace HardenedRaids
                 if (vehicles != null && vehicles.Count > 0) frame.PendingVehicles = vehicles;
                 // vagues suivantes : programmées par le postfix de TryGenerateRaidInfo si le raid aboutit (B12)
                 if (plan.waves > 1 && wave == null && !frame.DebugTest)
-                    frame.Planned = WaveScheduler.FromRaidPlan(plan, waveVehicleCost != null ? WaveCounts(plan, waveVehicleCost, raidPoints) : null, waveVehicles);
+                {
+                    WavePlan wp = WaveScheduler.FromRaidPlan(plan, waveVehicleCost != null ? WaveCounts(plan, waveVehicleCost, raidPoints) : null, waveVehicles);
+                    wp.loadoutSeed = loadoutSeed;
+                    wp.needBreacher = loadoutBreacher;
+                    wp.gate = gate;
+                    wp.hasGate = gateGiven;
+                    frame.Planned = wp;
+                }
             }
             HRLog.Msg((inRaid ? "" : $"hors raid ({parms.groupKind?.defName}) — ") + (wave != null ? $"vague {wave.index}/{wave.totalWaves} — " : "") + plan.Describe() +
                       $"\n   stratégie : {parms.raidStrategy?.defName ?? "?"}, générés : {outPawns.Count}, coût réel ≈ {spent:F0} / {infantryPoints:F0} pts" +
