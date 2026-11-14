@@ -29,6 +29,10 @@ namespace HardenedRaids
         public static float AnimalRarityFloor = 0.10f;       // chance minimale des events animaux quand la menace les dépasse
         public static float ClusterTurretCostFactor = 3f;    // prix des tourelles de grappe mécanoïde
 
+        // --- lot cluster ---
+        public static float MechClusterBudget = 20000f;      // points max d'une grappe ; au-delà, grappes supplémentaires
+        public static int MaxSimultaneousClusters = 3;       // grappes posées en même temps ; le reste arrive plus tard
+
         // --- IA ---
         public static bool SmarterStrategies = true;
         public static bool VeteransAvoidTurrets = true;
@@ -76,6 +80,9 @@ namespace HardenedRaids
             Scribe_Values.Look(ref WaveDelayHoursMax, "WaveDelayHoursMax", 6f);
             Scribe_Values.Look(ref AnimalRarityFloor, "AnimalRarityFloor", 0.10f);
             Scribe_Values.Look(ref ClusterTurretCostFactor, "ClusterTurretCostFactor", 3f);
+            // --- lot cluster ---
+            Scribe_Values.Look(ref MechClusterBudget, "MechClusterBudget", 20000f);
+            Scribe_Values.Look(ref MaxSimultaneousClusters, "MaxSimultaneousClusters", 3);
             Scribe_Values.Look(ref SmarterStrategies, "SmarterStrategies", true);
             Scribe_Values.Look(ref VeteransAvoidTurrets, "VeteransAvoidTurrets", true);
             Scribe_Values.Look(ref IgnoreDeadTurrets, "IgnoreDeadTurrets", true);
@@ -162,6 +169,10 @@ namespace HardenedRaids
                 Strings.T("AnimalRarityTip")) * 20f) / 20f;
             ClusterTurretCostFactor = Mathf.Round(l.SliderLabeled(Strings.T("ClusterTurrets", ClusterTurretCostFactor.ToString("F2")), ClusterTurretCostFactor, 1f, 6f, 0.5f,
                 Strings.T("ClusterTurretsTip")) * 4f) / 4f;
+            // --- lot cluster ---
+            MechClusterBudget = Mathf.Round(l.SliderLabeled(Strings.T("ClusterBudget", MechClusterBudget.ToString("N0")), MechClusterBudget, 10000f, 50000f, 0.5f,
+                Strings.T("ClusterBudgetTip")) / 1000f) * 1000f;
+            MaxSimultaneousClusters = (int)l.SliderLabeled(Strings.T("MaxClusters", MaxSimultaneousClusters), MaxSimultaneousClusters, 1, 6, 0.5f, Strings.T("MaxClustersTip"));
             l.GapLine();
 
             l.Label(Strings.T("SecAI"));

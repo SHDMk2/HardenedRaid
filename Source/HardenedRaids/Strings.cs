@@ -44,11 +44,17 @@ namespace HardenedRaids
             ["WaveMax"] = "Max delay between waves: {0} h",
 
             ["SecEvents"] = "<b>Other events</b>",
-            ["AnimalCap"] = "Max animals per manhunter pack: {0} (same as neolithic wave cap)",
+            ["AnimalCap"] = "Max animals per manhunter pack: {0} (neolithic wave cap, never below vanilla's 100)",
             ["AnimalRarity"] = "Animal events minimum chance: {0}",
-            ["AnimalRarityTip"] = "Manhunter packs and mass animal insanity can't spend unlimited points. When the threat exceeds what they can use, their chance drops in proportion (points they can use ÷ colony points), down to this floor. Never removed.",
+            ["AnimalRarityTip"] = "Manhunter packs (and Anomaly frenzied animals), mass animal insanity and the Vanilla Events Expanded single manhunter animal can't spend unlimited points. When the threat exceeds what they can use, their chance drops in proportion (points they can use ÷ colony points), down to this floor. Never removed.",
             ["ClusterTurrets"] = "Mech cluster turret price: ×{0}",
             ["ClusterTurretsTip"] = "Cluster turrets are cheap in vanilla (mini-turret = a scavenger). Higher = fewer turrets for the same points. The cluster also grows with points.",
+            // --- lot cluster ---
+            ["ClusterBudget"] = "Mech cluster budget: {0} pts",
+            ["ClusterBudgetTip"] = "A single mech cluster never exceeds this many points (vanilla: 10,000). Above it, the threat is split into several clusters landing at separate spots, each with its own activators, dormancy and letter. Quest and site clusters stay a single cluster capped at this value. Lower = lighter on performance.",
+            ["MaxClusters"] = "Simultaneous mech clusters: {0}",
+            ["MaxClustersTip"] = "Clusters landing at the same time (mech cluster event and mechanoid siege). The rest arrive later in groups of this size, with the same delay as raid waves.",
+            ["MsgClusters"] = "Mechanoids: {0} clusters, {1} landing now, {2} more in groups later (every {3}).",
 
             ["SecAI"] = "<b>AI</b>",
             ["Smarter"] = "Smarter strategies at high tiers (smart, breach, sappers)",
@@ -129,11 +135,17 @@ namespace HardenedRaids
             ["WaveMax"] = "Délai max entre vagues : {0} h",
 
             ["SecEvents"] = "<b>Autres events</b>",
-            ["AnimalCap"] = "Bêtes max par meute enragée : {0} (même plafond que les vagues néolithiques)",
+            ["AnimalCap"] = "Bêtes max par meute enragée : {0} (plafond des vagues néolithiques, jamais moins que les 100 de vanilla)",
             ["AnimalRarity"] = "Chance minimale des events animaux : {0}",
-            ["AnimalRarityTip"] = "Les meutes enragées et la folie animale de masse ne peuvent pas dépenser des points sans limite. Quand la menace dépasse ce qu'elles peuvent utiliser, leur chance baisse d'autant (points utilisables ÷ points de la colonie), jusqu'à ce plancher. Jamais supprimées.",
+            ["AnimalRarityTip"] = "Les meutes enragées (et les bêtes frénétiques d'Anomaly), la folie animale de masse et la bête enragée seule de Vanilla Events Expanded ne peuvent pas dépenser des points sans limite. Quand la menace dépasse ce qu'elles peuvent utiliser, leur chance baisse d'autant (points utilisables ÷ points de la colonie), jusqu'à ce plancher. Jamais supprimées.",
             ["ClusterTurrets"] = "Prix des tourelles de grappe mécanoïde : ×{0}",
             ["ClusterTurretsTip"] = "Les tourelles de grappe sont bon marché en vanilla (mini-tourelle = un scavenger). Plus haut = moins de tourelles pour les mêmes points. La grappe grandit aussi avec les points.",
+            // --- lot cluster ---
+            ["ClusterBudget"] = "Budget d'une grappe mécanoïde : {0} pts",
+            ["ClusterBudgetTip"] = "Une grappe mécanoïde ne dépasse jamais ce nombre de points (vanilla : 10 000). Au-delà, la menace est scindée en plusieurs grappes posées à des endroits distincts, chacune avec ses activateurs, sa dormance et sa lettre. Les grappes de quêtes et de sites restent une seule grappe plafonnée à cette valeur. Plus bas = plus léger pour les performances.",
+            ["MaxClusters"] = "Grappes mécanoïdes simultanées : {0}",
+            ["MaxClustersTip"] = "Grappes qui tombent en même temps (event grappe et siège mécanoïde). Le reste arrive plus tard par groupes de cette taille, avec le délai des vagues de raid.",
+            ["MsgClusters"] = "Mécanoïdes : {0} grappes, {1} maintenant, {2} autres plus tard par groupes (toutes les {3}).",
 
             ["SecAI"] = "<b>IA</b>",
             ["Smarter"] = "Stratégies plus intelligentes selon le palier (smart, brèche, sape)",
