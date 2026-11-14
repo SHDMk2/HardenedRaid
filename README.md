@@ -13,7 +13,11 @@ Vanilla scales raids by adding more and more poorly equipped raiders. Hardened R
 - **Value-based pricing**: a raider costs its body plus the market value of everything it carries (quality, implants, cyberbrain). Quality depends on rank: 1 NCO per 10 raiders, 1 officer per 100. Masterwork and legendary gear stay rare.
 - **Uniform loadouts**: one weapon set and one ammo type per raid, taken from the faction's own item tables. Melee sidearms replace Simple Sidearms' random junk.
 - **Armor gate**: strong armor and armored mechanoids are capped by raid points, and spacer armor only shows up once your colony has researched spacer tech.
-- **Waves**: up to 100 raiders per wave (industrial+) or 300 (neolithic/medieval); bigger raids arrive in several waves.
+- **Waves**: up to 100 raiders per wave (industrial+) or 300 (neolithic/medieval); bigger raids arrive in several waves, with the same gear, vehicles spread across waves, and quest links kept. Mechanoid raids and infestations are capped per wave too.
+- **Everything uncapped, not only raids**: quest and site threats (bandit camps, relic hunts, ancient complexes, sleeping mechs…) keep scaling past 10,000 points with vanilla's ratio, and hostile groups outside raids (crashed shuttle, caravan ambushes, sites, peace talks) get Hardened gear.
+- **Hostile faction bases**: defenders scale with your threat (25% by default), with modded perimeter turrets and, with Vehicle Framework, parked combat vehicles.
+- **Mech clusters**: no 10,000 cap; big clusters are split into several clusters (some delayed) so the game never freezes; cluster turrets cost more.
+- **Manhunter packs**: up to the neolithic wave cap (300 by default); animal events get rarer when your threat exceeds what they can spend.
 - **Smarter AI**: smart, breach and sapper raids become more common at high tiers, veterans avoid turret fields of fire, and turrets that are out of service (no power, empty magazine, no fuel) are ignored.
 - **Reinforced sieges**: artillery and turrets from mods (Fortifications, VFE Security, CE Armory...), trenches facing your base, and forward support teams during assaults.
 - **Enemy vehicles** (experimental, needs Vehicle Framework + Vanilla Vehicles Expanded): tanks, rocket and artillery fire support, trucks and IFVs, with crews, ammo and fuel. Vehicles are priced by value; rocket swarms and artillery cost much more.

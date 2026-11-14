@@ -34,7 +34,15 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | `SiegePatches.cs` | siege camps: modded artillery and turrets (manned or automatic), cover facing the base |
 | `SupportTeams.cs` | support teams (forward camp during an assault) + enemy turret resupply |
 | `Convoy.cs` | enemy convoy: approach, dismount, truck turrets, fire support, retreat and re-boarding (`Defs/HR_AI.xml`) |
-| `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (the only file touching VF types) |
+| `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (with `SettlementVehicles.cs`, the only files touching VF types) |
+| `RaidContext.cs` | one context per raid (stack), safe for nested raids; planned waves and vehicles of the main group |
+| `WaveCaps.cs` | per-wave cap of the vanilla fallback and of non-human raids (mechanoids…) |
+| `InfestationWaves.cs` | infestations: hive cap per wave, extra hives dig in later |
+| `PawnGenFixes.cs` | generation depth (relatives keep vanilla gear), redressed world pawns (implants, prostheses), corpse groups excluded, previews (`GeneratePawnKindsExample`) |
+| `EventPatches.cs` | manhunter packs (cap = low-tech wave cap, species weight), animal events rarer when the threat exceeds what they can spend |
+| `MechClusters.cs` | mech clusters: budget per cluster, split / delayed clusters, size cap, linear mech placement, fast position search |
+| `MechPricingPatches.cs` | armored mechanoid pricing for capsules, assemblers, sleeping mechs, random mech groups |
+| `Uninstall.cs` | "Prepare to remove the mod" button: Hardened lords → vanilla lords, waves / markers / registries cleared |
 | `Strings.cs` | player-facing strings (English / French), selected by the mod's language setting |
 | `HRSettings.cs` | settings window, startup |
 | `DebugActions.cs` | dev mode → "Hardened Raids" → raid plan preview / pending waves |
