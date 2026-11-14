@@ -43,11 +43,111 @@ namespace HardenedRaids
         {
             if (installPart == null) return;
             // implants et cyberbrain tirés à la planification ; seuls ceux réellement posés sont facturés (Slot.installed)
-            s.installed = new List<ThingDef>();
+            s.installed ??= new List<ThingDef>();
             var parts = new List<ThingDef>(s.implants ?? new List<ThingDef>());
             if (s.brain != null) parts.Add(s.brain);
             foreach (ThingDef d in parts) if (InstallPart(pawn, d)) s.installed.Add(d);
             SkipAdaptation(pawn, s.installed);
+        }
+
+        /// <summary>
+        /// Pawn du monde rhabillé par vanilla (PawnGenerator.RedressPawn ne passe pas par GenerateInitialHediffs) : on garde sa
+        /// santé telle quelle (lésions, séquelles permanentes), on remplace seulement ses membres manquants par une prothèse du
+        /// palier quand c'est possible, puis on pose les implants et le cyberbrain du slot. L'âge n'est pas contraint.
+        /// </summary>
+        public static void FitRedressed(Pawn pawn, Slot s)
+        {
+            s.installed = new List<ThingDef>();
+            s.required = null;
+            ReplaceMissingLimbs(pawn, s);
+            InstallImplants(pawn, s);
+        }
+
+        private static readonly List<Thing> noIngredients = new List<Thing>();
+        private static List<KeyValuePair<ThingDef, List<RecipeDef>>> prostheses;
+
+        /// <summary>Pièces de remplacement (techHediffsTags) et leurs opérations « installer une partie artificielle ».</summary>
+        private static List<KeyValuePair<ThingDef, List<RecipeDef>>> Prostheses()
+        {
+            if (prostheses != null) return prostheses;
+            var byThing = new Dictionary<ThingDef, List<RecipeDef>>();
+            foreach (RecipeDef r in DefDatabase<RecipeDef>.AllDefsListForReading)
+            {
+                if (r.addsHediff == null || r.workerClass == null || !typeof(Recipe_InstallArtificialBodyPart).IsAssignableFrom(r.workerClass)) continue;
+                if (r.ingredients == null) continue;
+                foreach (IngredientCount ic in r.ingredients)
+                {
+                    if (ic.filter?.AllowedThingDefs == null) continue;
+                    foreach (ThingDef d in ic.filter.AllowedThingDefs)
+                    {
+                        if (!d.isTechHediff || d.techHediffsTags.NullOrEmpty() || !r.IsIngredient(d)) continue;
+                        if (!byThing.TryGetValue(d, out var l)) byThing[d] = l = new List<RecipeDef>();
+                        if (!l.Contains(r)) l.Add(r);
+                    }
+                }
+            }
+            prostheses = byThing.ToList();
+            return prostheses;
+        }
+
+        private static void ReplaceMissingLimbs(Pawn pawn, Slot s)
+        {
+            HediffSet hs = pawn.health.hediffSet;
+            BodyPartRecord brain = hs.GetBrain();
+            foreach (Hediff_MissingPart mp in hs.GetMissingPartsCommonAncestors().ToList())
+            {
+                BodyPartRecord part = mp.Part;
+                if (part == null || !hs.PartIsMissing(part) || hs.PartOrAnyAncestorHasDirectlyAddedParts(part)) continue;
+                // doigts et orteils : pas un membre, on ne remplace pas un bras entier pour un doigt
+                if (part.def.tags != null && (part.def.tags.Contains(BodyPartTagDefOf.ManipulationLimbDigit) || part.def.tags.Contains(BodyPartTagDefOf.MovingLimbDigit))) continue;
+                // de la partie manquante vers le haut (main manquante → bras bionique posé à l'épaule), sans toucher au torse ni au cerveau
+                BodyPartRecord target = part;
+                for (int up = 0; up < 3 && target != null && target.parent != null; up++, target = target.parent)
+                {
+                    if (brain != null && target != part && IsAncestorOrSelf(target, brain)) break;
+                    if (TryReplace(pawn, s, target)) break;
+                }
+            }
+        }
+
+        private static bool IsAncestorOrSelf(BodyPartRecord anc, BodyPartRecord p)
+        {
+            for (BodyPartRecord x = p; x != null; x = x.parent) if (x == anc) return true;
+            return false;
+        }
+
+        private static bool TryReplace(Pawn pawn, Slot s, BodyPartRecord target)
+        {
+            FactionTables t = Loadouts.TablesFor(s.faction.def);
+            ThingDef best = null, cheapest = null;
+            RecipeDef bestR = null, cheapestR = null;
+            foreach (KeyValuePair<ThingDef, List<RecipeDef>> kv in Prostheses())
+            {
+                ThingDef d = kv.Key;
+                if (!d.techHediffsTags.Any(t.implantTags.Contains)) continue;   // jamais hors des tables de la faction (low-tech : rien)
+                RecipeDef r = kv.Value.FirstOrDefault(x => pawn.def.AllRecipes.Contains(x) && x.Worker.GetPartsToApplyOn(pawn, x).Contains(target));
+                if (r == null) continue;
+                float v = d.BaseMarketValue;
+                if (v <= s.tier.implantBudget && (best == null || v > best.BaseMarketValue)) { best = d; bestR = r; }
+                if (cheapest == null || v < cheapest.BaseMarketValue) { cheapest = d; cheapestR = r; }
+            }
+            // la meilleure dans le budget d'implant du palier, sinon la moins chère (T1 : pas de budget d'implant)
+            ThingDef pick = best ?? cheapest;
+            RecipeDef rec = best != null ? bestR : cheapestR;
+            if (pick == null) return false;
+            try
+            {
+                rec.Worker.ApplyOnPawn(pawn, target, null, noIngredients, null);
+            }
+            catch (Exception e)
+            {
+                HRLog.Msg($"prothèse {pick.defName} impossible sur {pawn} : {e.Message}");
+                return false;
+            }
+            if (!pawn.health.hediffSet.HasDirectlyAddedPartFor(target)) return false;
+            s.installed.Add(pick);
+            HRLog.Msg($"{pawn.LabelShort} (pawn du monde rhabillé) : {target.Label} manquant(e) → {pick.label}.");
+            return true;
         }
 
         /// <summary>

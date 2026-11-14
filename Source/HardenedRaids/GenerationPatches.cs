@@ -85,9 +85,12 @@ namespace HardenedRaids
         public static void Postfix(Pawn pawn)
         {
             Slot s = GenContext.For(pawn);
-            if (s == null || !s.tier.healthy) return;
+            if (s == null) return;
+            s.freshPawn = pawn;   // pawn neuf (un pawn du monde rhabillé ne passe jamais ici)
+            if (!s.tier.healthy) return;
             try
             {
+                s.installed = null;
                 PawnTuning.CleanHealth(pawn);
                 PawnTuning.InstallImplants(pawn, s);
             }

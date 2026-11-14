@@ -340,6 +340,7 @@ namespace HardenedRaids
             if (!Find.Storyteller.difficulty.ChildRaidersAllowed) request.AllowedDevelopmentalStages = DevelopmentalStage.Adult;
 
             Pawn pawn;
+            s.freshPawn = null; s.installed = null; s.required = null;
             s.depth = GenContext.Depth + 1;   // GeneratePawn incrémente la profondeur : les proches générés dedans sont à +2
             GenContext.Current = s;
             try
@@ -353,6 +354,8 @@ namespace HardenedRaids
             if (pawn == null) return null;
             try
             {
+                // pawn du monde réutilisé par vanilla (RedressPawn) : implants du slot, membres manquants remplacés, santé gardée
+                if (s.tier.healthy && pawn != s.freshPawn) PawnTuning.FitRedressed(pawn, s);
                 PawnTuning.ApplySkills(pawn, s);
                 PawnTuning.Mark(pawn, s.tierIndex);
                 PawnTuning.ApplyHarshDeath(pawn, s);
