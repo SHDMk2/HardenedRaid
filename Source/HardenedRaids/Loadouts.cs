@@ -296,6 +296,18 @@ namespace HardenedRaids
                 .Cast<ThingStuffPair?>().FirstOrDefault();
         }
 
+        /// <summary>Tenues étanches au vide que vanilla donnerait gratuitement (Odyssey), portables par ce pawn.</summary>
+        public static IEnumerable<ThingStuffPair> VacuumCandidates(Pawn pawn)
+        {
+            if (apparelPairs == null) yield break;
+            foreach (ThingStuffPair p in apparelPairs)
+            {
+                if (!p.thing.apparel.canBeGeneratedToSatisfyVacuumResistance || p.VacuumResistance < 0.1f) continue;
+                if (!p.thing.apparel.CorrectAgeForWearing(pawn) || !p.thing.apparel.PawnCanWear(pawn) || !ApparelUtility.HasPartsToWear(pawn, p.thing)) continue;
+                yield return p;
+            }
+        }
+
         // ---------------------------------------------------------------- armes
         private static List<ThingStuffPair> WeaponCands(FactionTables t, float budget, Func<ThingDef, bool> filter, bool ignoreTags = false) =>
             weaponPairs == null ? new List<ThingStuffPair>() :

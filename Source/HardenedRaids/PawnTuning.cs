@@ -4,6 +4,7 @@ using System.Linq;
 using System.Reflection;
 using HarmonyLib;
 using RimWorld;
+using RimWorld.Planet;
 using UnityEngine;
 using Verse;
 
@@ -181,7 +182,7 @@ namespace HardenedRaids
         }
 
         /// <returns>false si rien n'a pu être porté (on laisse alors vanilla faire)</returns>
-        public static bool WearLoadout(Pawn pawn, Slot s)
+        public static bool WearLoadout(Pawn pawn, Slot s, PawnGenerationRequest request)
         {
             List<ThingStuffPair> set = s.loadout.ApparelFor(s.role);
             if (set.Count == 0) return false;
@@ -196,22 +197,89 @@ namespace HardenedRaids
                 pawn.apparel.Wear(ap, dropReplacedApparel: false);
                 worn++;
             }
-            if (worn > 0) AddWarmthIfNeeded(pawn, s);
-            return worn > 0;
+            if (worn == 0) return false;
+            AddWarmthIfNeeded(pawn, s, request);
+            AddVacuumResistanceIfNeeded(pawn, s, request);
+            return true;
         }
 
-        private static void AddWarmthIfNeeded(Pawn pawn, Slot s)
+        /// <summary>Case du monde de la génération, comme vanilla (PawnApparelGenerator) : celle de la requête, sinon une base du joueur.</summary>
+        private static PlanetTile GenerationTile(PawnGenerationRequest request)
         {
-            if (RaidContext.Parms?.target is not Map map) return;
-            float outdoor = map.mapTemperature.OutdoorTemp;
+            PlanetTile tile = request.Tile;
+            if (!tile.Valid && Find.AnyPlayerHomeMap != null) tile = Find.AnyPlayerHomeMap.Tile;
+            return tile;
+        }
+
+        /// <summary>
+        /// Température à affronter : carte du raid si elle existe (température réelle), sinon carte déjà générée sur la case,
+        /// sinon la case du monde (embuscade, site, quête…) : la plus froide entre la température actuelle et la moyenne
+        /// de ce douzième et du suivant (vanilla regarde aussi deux douzièmes).
+        /// </summary>
+        private static float? OutdoorTempFor(PawnGenerationRequest request)
+        {
+            if (RaidContext.Parms?.target is Map raidMap) return raidMap.mapTemperature.OutdoorTemp;
+            PlanetTile tile = GenerationTile(request);
+            if (!tile.Valid) return null;
+            Map map = Current.Game?.FindMap(tile);
+            if (map != null) return map.mapTemperature.OutdoorTemp;
+            Twelfth tw = GenLocalDate.Twelfth(tile);
+            float t = Mathf.Min(GenTemperature.AverageTemperatureAtTileForTwelfth(tile, tw),
+                                GenTemperature.AverageTemperatureAtTileForTwelfth(tile, tw.NextTwelfth()));
+            if (Find.World?.tileTemperatures != null) t = Mathf.Min(t, Find.World.tileTemperatures.GetOutdoorTemp(tile));
+            return t;
+        }
+
+        private static void AddWarmthIfNeeded(Pawn pawn, Slot s, PawnGenerationRequest request)
+        {
+            float? outdoor = OutdoorTempFor(request);
+            if (!outdoor.HasValue) return;
             float comfy = pawn.GetStatValue(StatDefOf.ComfyTemperatureMin);
-            float missing = comfy - outdoor;
+            float missing = comfy - outdoor.Value;
             if (missing <= 5f) return;
             ThingStuffPair? warm = Loadouts.BestWarmLayer(Loadouts.TablesFor(s.faction.def), pawn, missing);
             if (!warm.HasValue) return;
             var ap = (Apparel)ThingMaker.MakeThing(warm.Value.thing, warm.Value.stuff);
             FinishGear(ap, pawn, s);
             pawn.apparel.Wear(ap, dropReplacedApparel: false);
+        }
+
+        /// <summary>
+        /// Odyssey : sur une case dans le vide, vanilla ajoute gratuitement une tenue étanche (PawnApparelGenerator.NeedVacuumResistance
+        /// + AddFreeVacuumResistanceAsNeeded). Même règle ici : objets « canBeGeneratedToSatisfyVacuumResistance », qui remplacent
+        /// la pièce incompatible seulement s'ils apportent nettement plus de résistance (+0,15, comme vanilla), jusqu'à 0,9.
+        /// </summary>
+        private static void AddVacuumResistanceIfNeeded(Pawn pawn, Slot s, PawnGenerationRequest request)
+        {
+            if (!ModsConfig.OdysseyActive || StatDefOf.VacuumResistance == null) return;
+            PlanetTile tile = GenerationTile(request);
+            if (!tile.Valid || tile.Tile?.PrimaryBiome == null || !tile.Tile.PrimaryBiome.inVacuum || !pawn.ConcernedByVacuum) return;
+            for (int i = 0; i < 10; i++)
+            {
+                if (pawn.GetStatValue(StatDefOf.VacuumResistance) >= 0.9f) break;
+                ThingStuffPair? pick = Loadouts.VacuumCandidates(pawn).Where(p => VacuumGain(pawn, p) > 0.15f)
+                    .Cast<ThingStuffPair?>().RandomElementByWeightWithDefault(p => p.Value.Commonality / (p.Value.Price * p.Value.Price + 1f), 0f);
+                if (!pick.HasValue) break;
+                foreach (Apparel worn in pawn.apparel.WornApparel.ToList())
+                {
+                    if (ApparelUtility.CanWearTogether(worn.def, pick.Value.thing, pawn.RaceProps.body)) continue;
+                    pawn.apparel.Remove(worn);
+                    worn.Destroy();
+                }
+                var ap = (Apparel)ThingMaker.MakeThing(pick.Value.thing, pick.Value.stuff);
+                FinishGear(ap, pawn, s);
+                pawn.apparel.Wear(ap, dropReplacedApparel: false);
+            }
+        }
+
+        private static float VacuumGain(Pawn pawn, ThingStuffPair p)
+        {
+            if (pawn.apparel.WornApparel.Any(w => w.def == p.thing)) return 0f;
+            float lost = 0f;
+            foreach (Apparel w in pawn.apparel.WornApparel)
+                if (!ApparelUtility.CanWearTogether(w.def, p.thing, pawn.RaceProps.body))
+                    lost += w.def.equippedStatOffsets.GetStatOffsetFromList(StatDefOf.VacuumResistance);
+            return p.VacuumResistance - lost;
         }
 
         /// <summary>Retire ce qui empêche le raider d'utiliser son arme (bouclier + arme à deux mains, ceinture bouclier + fusil...).

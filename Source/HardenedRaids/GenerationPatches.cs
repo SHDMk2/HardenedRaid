@@ -102,14 +102,14 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(PawnApparelGenerator), nameof(PawnApparelGenerator.GenerateStartingApparelFor))]
     public static class Patch_GenerateApparel
     {
-        public static bool Prefix(Pawn pawn)
+        public static bool Prefix(Pawn pawn, PawnGenerationRequest request)
         {
             Slot s = GenContext.For(pawn);
             if (s == null || !s.tier.healthy) return true;
             if (!pawn.RaceProps.ToolUser || !pawn.RaceProps.IsFlesh) return true;
             try
             {
-                return !PawnTuning.WearLoadout(pawn, s);
+                return !PawnTuning.WearLoadout(pawn, s, request);
             }
             catch (Exception e)
             {
