@@ -30,22 +30,40 @@ namespace HardenedRaids
         public static int SiteAnimalsCount(SitePartWorker_Manhunters worker, SitePartParams parms) =>
             AnimalsCount(parms.animalKind, parms.threatPoints);
 
-        /// <summary>Poids d'une espèce : même formule que vanilla, mais 0 seulement au-delà du nouveau plafond.</summary>
-        public static float Weight(PawnKindDef animal, float points)
+        /// <summary>AnimalWeight vanilla exact (0 dès 100 bêtes).</summary>
+        public static float VanillaWeight(PawnKindDef animal, float points)
         {
             points = Mathf.Max(points, 70f);
             if (animal.combatPower * 2f > points) return 0f;
-            int max = MaxAnimals;
-            int n = Mathf.Min(Mathf.RoundToInt(points / animal.combatPower), max);
-            return Mathf.Clamp01(Mathf.InverseLerp(max, 10f, n));
+            int n = Mathf.Min(Mathf.RoundToInt(points / animal.combatPower), AggressiveAnimalIncidentUtility.MaxAnimalCount);
+            return Mathf.Clamp01(Mathf.InverseLerp(AggressiveAnimalIncidentUtility.MaxAnimalCount, 10f, n));
         }
 
-        /// <summary>TryGetAnimalFromList vanilla, avec le poids du mod.</summary>
+        /// <summary>
+        /// Prolongement au-delà de 100 bêtes : 1 à 100 bêtes, 0 au plafond. Ne sert que si aucune espèce n'a de poids vanilla
+        /// (toutes demanderaient 100 bêtes ou plus) : en dessous, le choix reste exactement celui de vanilla.
+        /// </summary>
+        public static float TailWeight(PawnKindDef animal, float points)
+        {
+            points = Mathf.Max(points, 70f);
+            if (animal.combatPower * 2f > points) return 0f;
+            int max = MaxAnimals, vmax = AggressiveAnimalIncidentUtility.MaxAnimalCount;
+            if (max <= vmax) return 0f;
+            int n = Mathf.RoundToInt(points / animal.combatPower);
+            if (n < vmax) return 0f;
+            return Mathf.Clamp01(Mathf.InverseLerp(max, vmax, Mathf.Min(n, max)));
+        }
+
+        /// <summary>
+        /// TryGetAnimalFromList vanilla (A11) : poids vanilla tant qu'une espèce tient en 100 bêtes ; sinon prolongement
+        /// jusqu'au plafond ; sinon, comme vanilla, l'espèce la plus forte.
+        /// </summary>
         public static bool TryGetAnimalFromList(float points, List<PawnKindDef> animals, out PawnKindDef animalKind)
         {
             if (animals != null && animals.Count > 0)
             {
-                if (animals.TryRandomElementByWeight(a => Weight(a, points), out animalKind)) return true;
+                if (animals.TryRandomElementByWeight(a => VanillaWeight(a, points), out animalKind)) return true;
+                if (animals.TryRandomElementByWeight(a => TailWeight(a, points), out animalKind)) return true;
                 if (points > animals.Min(a => a.combatPower) * 2f)
                 {
                     animalKind = animals.MaxBy(a => a.combatPower);
@@ -125,7 +143,8 @@ namespace HardenedRaids
     public static class Patch_AnimalEventRarity
     {
         // B7 : indexé par l'objet Map (pas uniqueID, qui repart de 0 à chaque partie) ; entrées libérées avec la carte
-        private sealed class PowerEntry { public float value; }
+        private sealed class PowerEntry { public float value; public int tick; }
+        private const int RefreshTicks = GenDate.TicksPerDay;   // la pollution de la case évolue
         private static ConditionalWeakTable<Map, PowerEntry> maxPowerByMap = new ConditionalWeakTable<Map, PowerEntry>();
         private static float globalMaxPower = -1f;
 
@@ -165,12 +184,28 @@ namespace HardenedRaids
             return -1f;
         }
 
-        /// <summary>Bête la plus forte qui peut arriver enragée sur cette carte (biome d'abord, comme vanilla).</summary>
+        /// <summary>
+        /// Bête la plus forte qui peut arriver enragée sur cette carte. Mêmes filtres que TryFindAggressiveAnimalKind(map) :
+        /// espèces des biomes de la carte présentes normalement (ou en bord de mer si la carte est côtière), plus les espèces
+        /// de pollution si la case peut tirer une meute polluée (Biotech) — union = borne haute ; à défaut, toutes les espèces.
+        /// </summary>
         private static float MaxManhunterPower(Map map)
         {
-            if (maxPowerByMap.TryGetValue(map, out PowerEntry e)) return e.value;
-            float v = map.Biomes.SelectMany(b => b.AllWildAnimals).Where(AnimalCaps.CanArriveManhunter)
-                .Select(k => k.combatPower).DefaultIfEmpty(0f).Max();
+            int now = Find.TickManager?.TicksGame ?? 0;
+            if (maxPowerByMap.TryGetValue(map, out PowerEntry e) && now - e.tick < RefreshTicks) return e.value;
+            List<BiomeDef> biomes = map.Biomes.ToList();
+            bool coastal = map.TileInfo?.IsCoastal ?? false;
+            float pollutionChance = ModsConfig.BiotechActive && map.Tile.Valid
+                ? WildAnimalSpawner.PollutionAnimalSpawnChanceFromPollutionCurve.Evaluate(Find.WorldGrid[map.Tile].pollution) : 0f;
+            float v = 0f;
+            foreach (BiomeDef biome in biomes)
+                foreach (PawnKindDef k in biome.AllWildAnimals)
+                {
+                    if (k.combatPower <= v || !AnimalCaps.CanArriveManhunter(k)) continue;
+                    bool normal = biomes.Any(b => b.CommonalityOfAnimal(k) > 0f || (coastal && b.CommonalityOfCoastalAnimal(k) > 0f));
+                    bool polluted = pollutionChance > 0f && biomes.Any(b => b.CommonalityOfPollutionAnimal(k) > 0f);
+                    if (normal || polluted) v = k.combatPower;
+                }
             if (v <= 0f)
             {
                 if (globalMaxPower < 0f)
@@ -178,7 +213,7 @@ namespace HardenedRaids
                         .Select(k => k.combatPower).DefaultIfEmpty(100f).Max();
                 v = globalMaxPower;
             }
-            maxPowerByMap.AddOrUpdate(map, new PowerEntry { value = v });
+            maxPowerByMap.AddOrUpdate(map, new PowerEntry { value = v, tick = now });
             return v;
         }
     }
