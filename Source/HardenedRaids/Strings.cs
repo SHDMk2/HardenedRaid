@@ -17,6 +17,7 @@ namespace HardenedRaids
 
             ["SecPoints"] = "<b>Raid points</b>",
             ["UncapPoints"] = "Remove the 10,000 points cap",
+            ["UncapPointsTip"] = "Also extends the off-raid point curves that stop at or before 10,000 (distant fights such as bandit camps, default site points, relic hunts, ancient complexes, sleeping mechs, outpost / work site loot, ambushes, Anomaly threats, deep drill infestations), keeping the ratio of their last point.",
             ["ExtendCurves"] = "Extend wealth → points curves beyond 1M",
             ["ExtendCurvesTip"] = "Vanilla stops counting wealth after 1,000,000 (points per wealth, per colonist, colony mechs and subhumans; fixed-wealth mode stops after 1,800 days). Enabled: the curves keep the same slope.",
             ["PointsNow"] = "Current points on this map: {0}",
@@ -94,6 +95,7 @@ namespace HardenedRaids
 
             ["SecPoints"] = "<b>Points de raid</b>",
             ["UncapPoints"] = "Supprimer le plafond de 10 000 points",
+            ["UncapPointsTip"] = "Prolonge aussi les courbes de points hors raid qui s'arrêtent à ou avant 10 000 (combats lointains comme les camps de bandits, points de site par défaut, chasse aux reliques, complexes anciens, mécas endormis, butin des avant-postes / chantiers, embuscades, menaces Anomaly, infestations de foreuse), en gardant le ratio de leur dernier point.",
             ["ExtendCurves"] = "Prolonger les courbes richesse → points au-delà de 1M",
             ["ExtendCurvesTip"] = "Vanilla arrête de compter la richesse après 1 000 000 (points par richesse, par colon, mécas et sous-humains de la colonie ; le mode richesse fixe s'arrête après 1 800 jours). Activé : les courbes continuent avec la même pente.",
             ["PointsNow"] = "Points actuels sur cette carte : {0}",

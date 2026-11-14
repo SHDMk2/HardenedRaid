@@ -121,10 +121,11 @@ namespace HardenedRaids
             l.GapLine();
 
             l.Label(Strings.T("SecPoints"));
-            l.CheckboxLabeled(Strings.T("UncapPoints"), ref UncapPoints);
+            bool uncapBefore = UncapPoints;   // lot uncap : les courbes hors raid suivent ce réglage
+            l.CheckboxLabeled(Strings.T("UncapPoints"), ref UncapPoints, Strings.T("UncapPointsTip"));
             bool before = ExtendWealthCurves;
             l.CheckboxLabeled(Strings.T("ExtendCurves"), ref ExtendWealthCurves, Strings.T("ExtendCurvesTip"));
-            if (before != ExtendWealthCurves) PointsPatches.ApplyCurves();
+            if (before != ExtendWealthCurves || uncapBefore != UncapPoints) PointsPatches.ApplyCurves();
             if (Current.ProgramState == ProgramState.Playing && Find.CurrentMap != null)
                 l.Label(Strings.T("PointsNow", RimWorld.StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap).ToString("F0")));
             l.GapLine();

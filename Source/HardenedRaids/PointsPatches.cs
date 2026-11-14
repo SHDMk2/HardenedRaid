@@ -71,6 +71,9 @@ namespace HardenedRaids
                 }
                 curve.SetPoints(pts);
             }
+            // courbes points -> points hors raid (lot uncap), selon UncapPoints
+            try { UncapCurves.Apply(); }
+            catch (System.Exception e) { Log.Warning("[Hardened Raids] uncapped curves: " + e); }
         }
     }
 }
