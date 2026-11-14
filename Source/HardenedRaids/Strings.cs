@@ -18,7 +18,7 @@ namespace HardenedRaids
             ["SecPoints"] = "<b>Raid points</b>",
             ["UncapPoints"] = "Remove the 10,000 points cap",
             ["ExtendCurves"] = "Extend wealth → points curves beyond 1M",
-            ["ExtendCurvesTip"] = "Vanilla stops counting wealth after 1,000,000. Enabled: the curve keeps the same slope.",
+            ["ExtendCurvesTip"] = "Vanilla stops counting wealth after 1,000,000 (points per wealth, per colonist, colony mechs and subhumans; fixed-wealth mode stops after 1,800 days). Enabled: the curves keep the same slope.",
             ["PointsNow"] = "Current points on this map: {0}",
 
             ["SecTiers"] = "<b>Tiered generation</b>",
@@ -95,7 +95,7 @@ namespace HardenedRaids
             ["SecPoints"] = "<b>Points de raid</b>",
             ["UncapPoints"] = "Supprimer le plafond de 10 000 points",
             ["ExtendCurves"] = "Prolonger les courbes richesse → points au-delà de 1M",
-            ["ExtendCurvesTip"] = "Vanilla arrête de compter la richesse après 1 000 000. Activé : la courbe continue avec la même pente.",
+            ["ExtendCurvesTip"] = "Vanilla arrête de compter la richesse après 1 000 000 (points par richesse, par colon, mécas et sous-humains de la colonie ; le mode richesse fixe s'arrête après 1 800 jours). Activé : les courbes continuent avec la même pente.",
             ["PointsNow"] = "Points actuels sur cette carte : {0}",
 
             ["SecTiers"] = "<b>Génération par paliers</b>",
