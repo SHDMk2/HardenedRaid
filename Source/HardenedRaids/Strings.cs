@@ -44,9 +44,9 @@ namespace HardenedRaids
             ["WaveMax"] = "Max delay between waves: {0} h",
 
             ["SecEvents"] = "<b>Other events</b>",
-            ["AnimalCap"] = "Max animals per manhunter pack: {0} (same as neolithic wave cap)",
+            ["AnimalCap"] = "Max animals per manhunter pack: {0} (neolithic wave cap, never below vanilla's 100)",
             ["AnimalRarity"] = "Animal events minimum chance: {0}",
-            ["AnimalRarityTip"] = "Manhunter packs and mass animal insanity can't spend unlimited points. When the threat exceeds what they can use, their chance drops in proportion (points they can use ÷ colony points), down to this floor. Never removed.",
+            ["AnimalRarityTip"] = "Manhunter packs (and Anomaly frenzied animals), mass animal insanity and the Vanilla Events Expanded single manhunter animal can't spend unlimited points. When the threat exceeds what they can use, their chance drops in proportion (points they can use ÷ colony points), down to this floor. Never removed.",
             ["ClusterTurrets"] = "Mech cluster turret price: ×{0}",
             ["ClusterTurretsTip"] = "Cluster turrets are cheap in vanilla (mini-turret = a scavenger). Higher = fewer turrets for the same points. The cluster also grows with points.",
             // --- lot cluster ---
@@ -127,9 +127,9 @@ namespace HardenedRaids
             ["WaveMax"] = "Délai max entre vagues : {0} h",
 
             ["SecEvents"] = "<b>Autres events</b>",
-            ["AnimalCap"] = "Bêtes max par meute enragée : {0} (même plafond que les vagues néolithiques)",
+            ["AnimalCap"] = "Bêtes max par meute enragée : {0} (plafond des vagues néolithiques, jamais moins que les 100 de vanilla)",
             ["AnimalRarity"] = "Chance minimale des events animaux : {0}",
-            ["AnimalRarityTip"] = "Les meutes enragées et la folie animale de masse ne peuvent pas dépenser des points sans limite. Quand la menace dépasse ce qu'elles peuvent utiliser, leur chance baisse d'autant (points utilisables ÷ points de la colonie), jusqu'à ce plancher. Jamais supprimées.",
+            ["AnimalRarityTip"] = "Les meutes enragées (et les bêtes frénétiques d'Anomaly), la folie animale de masse et la bête enragée seule de Vanilla Events Expanded ne peuvent pas dépenser des points sans limite. Quand la menace dépasse ce qu'elles peuvent utiliser, leur chance baisse d'autant (points utilisables ÷ points de la colonie), jusqu'à ce plancher. Jamais supprimées.",
             ["ClusterTurrets"] = "Prix des tourelles de grappe mécanoïde : ×{0}",
             ["ClusterTurretsTip"] = "Les tourelles de grappe sont bon marché en vanilla (mini-tourelle = un scavenger). Plus haut = moins de tourelles pour les mêmes points. La grappe grandit aussi avec les points.",
             // --- lot cluster ---
