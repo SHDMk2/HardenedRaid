@@ -32,6 +32,11 @@ Every feature can be tuned or disabled in the mod settings.
 
 The compiled mod (`Assemblies/HardenedRaids.dll`) is included, no build needed.
 
+## Uninstalling
+
+In your game, open Mod settings → Hardened Raids → **Prepare to remove the mod**: Hardened groups become vanilla raid groups, pending waves are cancelled and the mod's markers are removed.
+Then save, quit, and remove the mod before loading that save.
+
 ## Compatibility
 
 - RimWorld **1.7** only.

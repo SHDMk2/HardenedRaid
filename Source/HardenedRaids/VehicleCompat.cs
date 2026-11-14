@@ -404,10 +404,12 @@ namespace HardenedRaids
         /// <summary>
         /// Véhicule ennemi qui sort de la carte : VF emporte ses passagers tels quels. Un colon (ou tout pawn d'une
         /// autre faction) à bord est enlevé comme par un ravisseur à pied.
+        /// Seulement les véhicules de nos convois Hardened (lord LordJob_HRConvoy) : ni ceux d'autres mods, ni les autres PNJ.
         /// </summary>
         public static void KidnapAboard(Pawn vehicle)
         {
             if (vehicle is not VehiclePawn vp || vp.Faction == null || vp.Faction.IsPlayer) return;
+            if (vp.GetLord()?.LordJob is not LordJob_HRConvoy) return;
             var victims = new List<Pawn>();
             foreach (Thing t in vp.inventory.innerContainer) if (t is Pawn x) victims.Add(x);
             if (vp.handlers != null) foreach (VehicleRoleHandler h in vp.handlers) victims.AddRange(h.thingOwner.InnerListForReading);
@@ -758,6 +760,20 @@ namespace HardenedRaids
         public List<Pawn> dismount;
         public bool deployTurrets;
         public float tierX;
+    }
+
+    /// <summary>Convoi en attente non consommé (incident raté, lords non créés...) : oublié à la fin de l'incident.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(IncidentWorker), nameof(IncidentWorker.TryExecute))]
+    public static class Patch_ConvoyHandoffIncidentEnd
+    {
+        public static void Finalizer() => ConvoyHandoff.Pending = null;
+    }
+
+    /// <summary>Changement / chargement de partie, retour au menu : rien ne doit survivre de la partie précédente.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Verse.Profile.MemoryUtility), nameof(Verse.Profile.MemoryUtility.ClearAllMapsAndWorld))]
+    public static class Patch_ConvoyHandoffClear
+    {
+        public static void Prefix() => ConvoyHandoff.Pending = null;
     }
 
     [HarmonyLib.HarmonyPatch(typeof(LordMaker), nameof(LordMaker.MakeNewLord))]

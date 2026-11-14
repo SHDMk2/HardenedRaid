@@ -85,6 +85,12 @@ namespace HardenedRaids
             ["MsgWaves"] = "Hardened Raids: {0} attacks in {1} waves ({2} raiders in total). Next wave in {3}.",
             ["MsgSupportTeam"] = "A support team from {0} ({1} men) is setting up firing positions.",
             ["MsgTruckTurret"] = "{0} is unloading a {1} in front of its trucks.",
+
+            // --- lot S ---
+            ["PrepUninstall"] = "Prepare to remove the mod (this game)",
+            ["PrepUninstallConfirm"] = "Prepare this game for removing Hardened Raids?\n\nHardened convoys, turret crews and re-boarding groups become vanilla raid groups (assault or leave the map), pending waves are cancelled, turret resupply stops and the internal tier marker is removed from every pawn.\n\nThen save, and remove the mod before loading that save.",
+            ["PrepUninstallDone"] = "Hardened Raids is ready to be removed: {0} group(s) converted, {1} pending wave(s) cancelled, {2} marker(s) removed. The game is paused.\n\nSave now, then remove the mod before loading the save. Keep playing with the mod and it will start again.",
+            ["PrepUninstallErrors"] = "{0} error(s) occurred, see the log.",
         };
 
         private static readonly Dictionary<string, string> fr = new Dictionary<string, string>
@@ -162,6 +168,12 @@ namespace HardenedRaids
             ["MsgWaves"] = "Hardened Raids : {0} attaque en {1} vagues ({2} raiders au total). Prochaine vague dans {3}.",
             ["MsgSupportTeam"] = "Une équipe d'appui de {0} ({1} hommes) installe des positions de tir.",
             ["MsgTruckTurret"] = "{0} décharge un(e) {1} devant ses camions.",
+
+            // --- lot S ---
+            ["PrepUninstall"] = "Préparer la désactivation du mod (cette partie)",
+            ["PrepUninstallConfirm"] = "Préparer cette partie au retrait de Hardened Raids ?\n\nLes convois, servants de tourelles et groupes de rembarquement Hardened deviennent des groupes de raid vanilla (assaut ou sortie de carte), les vagues en attente sont annulées, le ravitaillement des tourelles s'arrête et le marqueur interne de palier est retiré de tous les pawns.\n\nEnsuite, sauvegardez, puis retirez le mod avant de charger cette sauvegarde.",
+            ["PrepUninstallDone"] = "Hardened Raids peut être retiré : {0} groupe(s) converti(s), {1} vague(s) en attente annulée(s), {2} marqueur(s) retiré(s). Le jeu est en pause.\n\nSauvegardez maintenant, puis retirez le mod avant de charger la sauvegarde. Si vous continuez à jouer avec le mod, il reprend.",
+            ["PrepUninstallErrors"] = "{0} erreur(s), voir le journal.",
         };
 
         public static string LanguageName(HRLanguage lang) => lang == HRLanguage.French ? "Français" : "English";
