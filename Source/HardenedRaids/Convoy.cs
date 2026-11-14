@@ -670,7 +670,11 @@ namespace HardenedRaids
             b.SetFaction(faction);
             GenSpawn.Spawn(b, cell, map, def.rotatable ? Rot4.FromAngleFlat(new Vector3(axis.x, 0f, axis.y).AngleFlat()) : Rot4.North);
             Sandbags(map, faction, cell, def, axis);
-            if (b is Building_Turret bt) MapComponent_HostileTurretSupply.DropAmmoNear(bt, 3);
+            if (b is Building_Turret bt)
+            {
+                MapComponent_HostileTurretSupply.Register(bt);   // seule une tourelle du registre est ravitaillée
+                MapComponent_HostileTurretSupply.DropAmmoNear(bt, 3);
+            }
 
             var crew = new List<Pawn>();
             if (b.TryGetComp<CompMannable>() != null)
