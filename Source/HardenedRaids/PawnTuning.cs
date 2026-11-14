@@ -42,13 +42,27 @@ namespace HardenedRaids
         public static void InstallImplants(Pawn pawn, Slot s)
         {
             if (installPart == null) return;
-            // implants et cyberbrain tirés à la planification (ils entrent dans le prix du raider)
+            // implants et cyberbrain tirés à la planification ; seuls ceux réellement posés sont facturés (Slot.installed)
+            s.installed = new List<ThingDef>();
             var parts = new List<ThingDef>(s.implants ?? new List<ThingDef>());
             if (s.brain != null) parts.Add(s.brain);
-            foreach (ThingDef d in parts) InstallPart(pawn, d);
-            SkipAdaptation(pawn, parts);
+            foreach (ThingDef d in parts) if (InstallPart(pawn, d)) s.installed.Add(d);
+            SkipAdaptation(pawn, s.installed);
         }
 
+        /// <summary>
+        /// Pièces imposées par le pawnkind (techHediffsRequired : bioniques de cataphracte, acidificateur…) à la place de
+        /// PawnTechHediffsGenerator.GenerateTechHediffsFor : les implants vanilla tirés au hasard ne sont pas posés sur un
+        /// raider Hardened (gratuits, et parfois sur des factions qui n'en ont pas dans la dotation) ; les imposés le sont et
+        /// sont facturés, sauf l'acidificateur (sans effet sur le prix, comme ApplyHarshDeath).
+        /// </summary>
+        public static void InstallRequiredTechHediffs(Pawn pawn, Slot s)
+        {
+            s.required = new List<ThingDef>();   // la boucle de GenerateInitialHediffs peut réinitialiser la santé et repasser ici
+            if (pawn.kindDef.techHediffsRequired == null) return;
+            foreach (ThingDef d in pawn.kindDef.techHediffsRequired)
+                if (InstallPart(pawn, d) && d.defName != "DeathAcidifier") s.required.Add(d);
+        }
         /// <summary>
         /// Pièces à phase d'adaptation (cyberbrains GiTS : stade « adapting » qui monte de 0,5/jour) : un raider arrive
         /// avec des implants posés depuis longtemps, on saute directement au dernier stade.
@@ -66,9 +80,11 @@ namespace HardenedRaids
             }
         }
 
-        private static void InstallPart(Pawn pawn, ThingDef d)
+        /// <returns>true si la pièce a réellement été posée</returns>
+        private static bool InstallPart(Pawn pawn, ThingDef d)
         {
-            if (installPart == null) return;
+            if (installPart == null) return false;
+            int before = CountFrom(pawn, d);
             try
             {
                 installPart.Invoke(null, new object[] { pawn, d });
@@ -76,7 +92,22 @@ namespace HardenedRaids
             catch (Exception e)
             {
                 HRLog.Msg($"implant {d.defName} impossible sur {pawn} : {e.InnerException?.Message ?? e.Message}");
+                return false;
             }
+            return CountFrom(pawn, d) > before;
+        }
+
+        /// <summary>Hediffs issus de cette pièce (pièce rendue au retrait, ou hediff d'un implant à usage direct).</summary>
+        private static int CountFrom(Pawn pawn, ThingDef d)
+        {
+            HediffDef direct = d.GetCompProperties<CompProperties_UseEffectInstallImplant>()?.hediffDef;
+            int n = 0;
+            foreach (Hediff h in pawn.health.hediffSet.hediffs)
+            {
+                if (h.def.spawnThingOnRemoved == d || (direct != null && h.def == direct))
+                    n += h is Hediff_Level lv ? lv.level : 1;
+            }
+            return n;
         }
 
         // ------------------------------------------------------------ armes de secours

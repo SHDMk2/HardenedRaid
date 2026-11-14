@@ -53,3 +53,30 @@ namespace HardenedRaids
         public static void Finalizer(bool __state) { if (__state) GenContext.NonCombat--; }
     }
 }
+
+namespace HardenedRaids
+{
+    /// <summary>
+    /// Implants vanilla d'un raider Hardened : seuls les techHediffsRequired du pawnkind sont posés (et facturés), pas le tirage
+    /// aléatoire de GenerateTechHediffsFor (gratuit). Seul appelant : PawnGenerator.GenerateInitialHediffs (pawns neufs).
+    /// Nos implants de dotation sont posés après, dans le postfixe de GenerateInitialHediffs, et ne sont donc pas concernés.
+    /// </summary>
+    [HarmonyPatch(typeof(PawnTechHediffsGenerator), nameof(PawnTechHediffsGenerator.GenerateTechHediffsFor))]
+    public static class Patch_GenerateTechHediffs
+    {
+        public static bool Prefix(Pawn pawn)
+        {
+            Slot s = GenContext.For(pawn);
+            if (s == null || !s.tier.healthy) return true;
+            try
+            {
+                PawnTuning.InstallRequiredTechHediffs(pawn, s);
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] required implants of " + pawn + " : " + e.Message);
+            }
+            return false;
+        }
+    }
+}

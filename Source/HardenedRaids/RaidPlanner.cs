@@ -264,7 +264,6 @@ namespace HardenedRaids
                 s.rank = i < nOff ? Rank.Officer : i < nOff + nNco ? Rank.Nco : Rank.Soldier;
                 s.implants = Loadouts.PickImplants(parms.faction.def, s.tier, rng);
                 s.brain = Tiers.IsLowTech(parms.faction.def) ? null : Loadouts.PickCyberbrain(s.tier.cyberbrainRank);
-                spent += Pricing.SlotPrice(s);
             }
 
             // ---- vagues suivantes
@@ -279,6 +278,7 @@ namespace HardenedRaids
             {
                 Pawn pawn = GenerateOne(s, parms, allowFood, validator);
                 if (pawn == null) continue;
+                spent += Pricing.SlotPrice(s, pawn);   // ce qui a réellement été posé
                 if (parms.forceOneDowned && !downedDone)
                 {
                     pawn.health.forceDowned = true;

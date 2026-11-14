@@ -88,9 +88,60 @@ namespace HardenedRaids
         public static int NcoCount(int n) => n / 10;
         public static int OfficerCount(int n) => n / 100;
 
-        public static float BodyCost(FactionDef f, TierDef tier) => Tiers.BaseCostFor(f) * tier.bodyMult;
+        /// <summary>
+        /// Prix du corps : base × palier × facteur de xénotype (combatPowerFactor : Sanguophage ×2,5, Néandertalien ×1,6…).
+        /// Le xénotype ne porte que sur le corps : l'équipement vaut la même chose quel que soit son porteur.
+        /// </summary>
+        public static float BodyCost(FactionDef f, TierDef tier, float xenoFactor = 1f) => Tiers.BaseCostFor(f) * tier.bodyMult * xenoFactor;
 
-        public static float Points(float body, float dollars) => (body + dollars / Mathf.Max(1f, HRSettings.ValueDivisor)) * HRSettings.CostFactor;
+        /// <param name="floor">
+        /// Plancher : coût vanilla du même pawnkind (combatPower × xénotype). Un raider Hardened est au moins aussi fort que
+        /// sa version vanilla (sain, skills relevés, équipement de palier), il ne doit donc jamais coûter moins cher qu'elle ;
+        /// le combatPower vanilla comprend déjà son équipement, d'où un plancher sur le total et non un ajout au corps.
+        /// </param>
+        public static float Points(float body, float dollars, float floor = 0f) =>
+            Mathf.Max(body + dollars / Mathf.Max(1f, HRSettings.ValueDivisor), floor) * HRSettings.CostFactor;
+
+        public static float XenoFactor(XenotypeDef x) => ModsConfig.BiotechActive && x != null ? x.combatPowerFactor : 1f;
+
+        /// <summary>Prix d'un raider de ce pawnkind / xénotype pour cet équipement.</summary>
+        public static float KindPrice(FactionDef f, TierDef tier, PawnKindDef kind, XenotypeDef xeno, float dollars)
+        {
+            float xf = XenoFactor(xeno);
+            return Points(BodyCost(f, tier, xf), dollars, (kind?.combatPower ?? 0f) * xf);
+        }
+
+        // ---- répartition attendue des pawnkinds / xénotypes d'une faction (groupes de combat, hors chef unique)
+        private struct KindShare { public PawnKindDef kind; public XenotypeDef xeno; public float weight; }
+        private static readonly Dictionary<FactionDef, List<KindShare>> kindMix = new Dictionary<FactionDef, List<KindShare>>();
+
+        private static List<KindShare> KindMix(FactionDef f)
+        {
+            if (kindMix.TryGetValue(f, out var mix)) return mix;
+            mix = new List<KindShare>();
+            bool xenos = ModsConfig.BiotechActive && f.humanlikeFaction;
+            if (f.pawnGroupMakers != null)
+                foreach (PawnGroupMaker gm in f.pawnGroupMakers)
+                {
+                    if (gm.kindDef != PawnGroupKindDefOf.Combat || gm.options == null) continue;
+                    float total = 0f;
+                    foreach (PawnGenOption o in gm.options) if (Eligible(o)) total += o.selectionWeight;
+                    if (total <= 0f) continue;
+                    foreach (PawnGenOption o in gm.options)
+                    {
+                        if (!Eligible(o)) continue;
+                        float w = gm.commonality * o.selectionWeight / total;
+                        if (!xenos) { mix.Add(new KindShare { kind = o.kind, weight = w }); continue; }
+                        // copie : XenotypesAvailableFor renvoie un dictionnaire partagé
+                        foreach (KeyValuePair<XenotypeDef, float> x in PawnGenerator.XenotypesAvailableFor(o.kind, f).ToList())
+                            mix.Add(new KindShare { kind = o.kind, xeno = x.Key, weight = w * x.Value });
+                    }
+                }
+            kindMix[f] = mix;
+            return mix;
+
+            static bool Eligible(PawnGenOption o) => o.kind != null && o.kind.isFighter && !o.kind.factionLeader && o.kind.RaceProps != null && o.kind.RaceProps.Humanlike;
+        }
 
         public static float GearValue(Loadout lo, Role role)
         {
@@ -124,17 +175,38 @@ namespace HardenedRaids
             float dollars = AverageGearValue(lo, tier) * qf + Loadouts.ExpectedImplantValue(f, tier);
             ThingDef brain = Tiers.IsLowTech(f) ? null : Loadouts.PickCyberbrain(tier.cyberbrainRank);
             if (brain != null) dollars += brain.BaseMarketValue;
-            return Points(BodyCost(f, tier), dollars);
+            // espérance sur les pawnkinds / xénotypes que la faction enverra (xénotype et plancher vanilla par pawnkind)
+            List<KindShare> mix = KindMix(f);
+            float sum = 0f, wsum = 0f;
+            foreach (KindShare k in mix)
+            {
+                sum += k.weight * KindPrice(f, tier, k.kind, k.xeno, dollars);
+                wsum += k.weight;
+            }
+            return wsum > 0f ? sum / wsum : Points(BodyCost(f, tier), dollars);
         }
 
-        /// <summary>Prix exact d'un raider une fois son grade, son rôle et ses implants connus (qualité : espérance du grade).</summary>
-        public static float SlotPrice(Slot s)
+        /// <summary>
+        /// Prix d'un raider une fois son grade, son rôle et ses implants connus (qualité : espérance du grade).
+        /// Avec le pawn généré : xénotype réel et seulement les pièces réellement posées (dotation, membres remplacés,
+        /// techHediffsRequired du pawnkind) ; sans : ce qui est prévu.
+        /// </summary>
+        public static float SlotPrice(Slot s, Pawn pawn = null)
         {
             int len = Tiers.LadderFor(s.faction.def).Length;
             float dollars = GearValue(s.loadout, s.role) * QualityModel.ExpectedValueFactor(s.rank, s.tierIndex, len);
-            if (s.implants != null) dollars += s.implants.Sum(d => d.BaseMarketValue);
-            if (s.brain != null) dollars += s.brain.BaseMarketValue;
-            return Points(BodyCost(s.faction.def, s.tier), dollars);
+            if (pawn != null)
+            {
+                if (s.installed != null) dollars += s.installed.Sum(d => d.BaseMarketValue);
+                if (s.required != null) dollars += s.required.Sum(d => d.BaseMarketValue);
+            }
+            else
+            {
+                if (s.implants != null) dollars += s.implants.Sum(d => d.BaseMarketValue);
+                if (s.brain != null) dollars += s.brain.BaseMarketValue;
+            }
+            XenotypeDef xeno = pawn?.genes?.Xenotype ?? s.xenotype;
+            return KindPrice(s.faction.def, s.tier, s.kind, xeno, dollars);
         }
     }
 
