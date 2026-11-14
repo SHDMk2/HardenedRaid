@@ -47,6 +47,9 @@ namespace HardenedRaids
         /// <summary>Annulée par un signal pendant le traitement des vagues (non sauvegardé).</summary>
         public bool cancelled;
 
+        /// <summary>Vague d'un siège : vient en assaut, ne monte pas de camp (ni d'équipe d'appui).</summary>
+        public bool FromSiege => strategy?.Worker is RaidStrategyWorker_Siege;
+
         public bool IsInfestation => incident != null && incident == IncidentDefOf.Infestation;
 
         /// <summary>Véhicules de la vague encore présents dans le jeu (defs retirées ignorées).</summary>
@@ -196,7 +199,7 @@ namespace HardenedRaids
         }
 
         /// <summary>Siège : seule la vague 1 monte le camp ; les suivantes viennent en assaut.</summary>
-        private static RaidStrategyDef WaveStrategy(RaidStrategyDef s) =>
+        internal static RaidStrategyDef WaveStrategy(RaidStrategyDef s) =>
             s?.Worker is RaidStrategyWorker_Siege && !(s.Worker is RaidStrategyWorker_SiegeMechanoid) ? RaidStrategyDefOf.ImmediateAttack : s;
 
         /// <summary>Programme les vagues prévues par ce raid ; appelé après un TryGenerateRaidInfo réussi.</summary>
@@ -208,7 +211,7 @@ namespace HardenedRaids
             IncidentParms parms = frame.Parms;
             if (parms?.target is not Map map || parms.faction == null) return;
             float basePoints = frame.PreAdjustPoints > 0f ? frame.PreAdjustPoints : parms.points;
-            Schedule(wp, parms, map, parms.faction, WaveStrategy(parms.raidStrategy), parms.raidArrivalMode, basePoints, parms.points, frame.PresetSpawnCenter);
+            Schedule(wp, parms, map, parms.faction, parms.raidStrategy, parms.raidArrivalMode, basePoints, parms.points, frame.PresetSpawnCenter);
             Messages.Message(Strings.T("MsgWaves", parms.faction.Name, wp.waves, wp.total,
                                  $"{HRSettings.WaveDelayHoursMin:F0}-{HRSettings.WaveDelayHoursMax:F0} h"),
                              MessageTypeDefOf.ThreatBig);
@@ -355,7 +358,7 @@ namespace HardenedRaids
             parms.target = w.map;
             parms.faction = w.faction;
             parms.points = w.points;
-            parms.raidStrategy = w.strategy;
+            parms.raidStrategy = WaveScheduler.WaveStrategy(w.strategy);   // siège : seule la vague 1 monte le camp
             parms.raidArrivalMode = arrival;
             parms.forced = true;
             parms.quest = quest;
