@@ -80,3 +80,55 @@ namespace HardenedRaids
         }
     }
 }
+
+namespace HardenedRaids
+{
+    /// <summary>
+    /// Aperçus (SitePartWorker_Outpost : nombre d'ennemis ; QuestNode_Raid / QuestGen_Threat : pawnkinds du raid ;
+    /// SymbolResolver_Settlement : nombre de lits…) : reflètent la génération Hardened, sans générer de pawn.
+    /// Avec une graine, l'aperçu et la génération réelle tirent la même chose ; résultat mis en cache (le libellé d'un site
+    /// peut être demandé à chaque image), une heure de jeu au plus, vidé au changement de partie.
+    /// </summary>
+    [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), nameof(PawnGroupKindWorker_Normal.GeneratePawnKindsExample))]
+    public static class Patch_GeneratePawnKindsExample
+    {
+        private const int CacheTicks = 2500;
+        private const int CacheMax = 64;
+        private static readonly Dictionary<string, KeyValuePair<int, List<PawnKindDef>>> cache = new Dictionary<string, KeyValuePair<int, List<PawnKindDef>>>();
+        private static Game cacheGame;
+
+        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, ref IEnumerable<PawnKindDef> __result)
+        {
+            if (parms == null || groupMaker == null || !RaidGenerator.Applies(parms)) return true;
+            try
+            {
+                string key = null;
+                int now = Find.TickManager?.TicksGame ?? 0;
+                if (parms.seed.HasValue)
+                {
+                    if (cacheGame != Current.Game) { cache.Clear(); cacheGame = Current.Game; }
+                    key = $"{parms.faction.loadID}|{parms.groupKind.defName}|{parms.points:F0}|{parms.seed.Value}|{parms.raidStrategy?.defName}|{parms.inhabitants}|{groupMaker.GetHashCode()}";
+                    if (cache.TryGetValue(key, out var hit) && now - hit.Key < CacheTicks && now >= hit.Key)
+                    {
+                        __result = hit.Value;
+                        return false;
+                    }
+                }
+                List<PawnKindDef> kinds = RaidGenerator.ExampleKinds(parms, groupMaker);
+                if (kinds == null) return true;
+                if (key != null)
+                {
+                    if (cache.Count >= CacheMax) cache.Clear();
+                    cache[key] = new KeyValuePair<int, List<PawnKindDef>>(now, kinds);
+                }
+                __result = kinds;
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] pawn kinds example: " + e.Message);
+                return true;
+            }
+        }
+    }
+}
