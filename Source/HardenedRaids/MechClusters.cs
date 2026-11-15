@@ -18,7 +18,8 @@ namespace HardenedRaids
     //   siège mécanoïde sont scindés en N grappes égales posées à des emplacements distincts (chacune avec son lord, ses
     //   activateurs, sa dormance et sa lettre vanilla). Au-delà de MaxSimultaneousClusters, le reste arrive en grappes
     //   différées : incidents « MechCluster » vanilla mis dans la file d'incidents du conteur (IncidentQueue, sauvegardée par
-    //   le jeu). Aucun état propre au mod : sans le mod, ces incidents restent des grappes vanilla (plafonnées à 10 000).
+    //   le jeu, réessayés pendant RetryTicks). Au plus MaxTotal grappes par incident, surplus perdu. Aucun état propre au
+    //   mod : sans le mod, ces incidents restent des grappes vanilla (plafonnées à 10 000).
     // - Quêtes (QuestNode_SpawnMechCluster) et sites (GenStep_MechCluster) : une seule grappe plafonnée au budget (la quête
     //   porte un seul croquis et attend « tag.AllEnemiesDefeated », envoyé par le premier lord vaincu).
     // - Taille : courbe vanilla prolongée, plafonnée à MaxSide APRÈS le facteur aléatoire 0,8-2 ; la recherche du plus grand
@@ -40,8 +41,21 @@ namespace HardenedRaids
         /// <summary>Plafond d'une grappe unique (tous les appelants de GenerateClusterSketch).</summary>
         public static float SingleCap => HRSettings.UncapPoints ? Budget : MechClusterGenerator.MaxPoints;
 
+        // D9 : grappes par incident (simultanées + différées) ; au-delà, le surplus est perdu (5M pts = 250 grappes sinon).
+        // Réglage MaxSimultaneousClusters ≤ 6 : avec 3 par défaut, 3 maintenant + 7 différées.
+        public const int MaxTotal = 10;
+
+        /// <summary>Grappes nécessaires pour ces points (chacune ≤ Budget), avant le plafond MaxTotal.</summary>
         public static int CountFor(float points) =>
             HRSettings.UncapPoints && points > Budget ? Mathf.CeilToInt(points / Budget) : 1;
+
+        /// <summary>Nombre de grappes réellement posées (simultanées + différées) : au plus MaxTotal.</summary>
+        public static int Capped(int needed)
+        {
+            if (needed <= MaxTotal) return needed;
+            HRLog.Msg($"grappes mécanoïdes : {needed} nécessaires, plafonnées à {MaxTotal} (surplus perdu)");
+            return MaxTotal;
+        }
 
         // drapeaux de l'appel en cours (thread principal uniquement)
         internal static bool Reentrant;
@@ -83,9 +97,10 @@ namespace HardenedRaids
         public static bool Prefix(IncidentWorker_MechCluster __instance, IncidentParms parms, ref bool __result)
         {
             if (ClusterSplit.Reentrant || parms?.target is not Map map) return true;
-            int n = ClusterSplit.CountFor(parms.points);
-            if (n <= 1) return true;
-            float total = parms.points, per = total / n;
+            int needed = ClusterSplit.CountFor(parms.points);
+            if (needed <= 1) return true;
+            float total = parms.points, per = total / needed;   // chaque grappe ≤ budget, même plafonnées
+            int n = ClusterSplit.Capped(needed);
             int simult = Mathf.Min(n, ClusterSplit.MaxSimultaneous), spawned = 0;
             try
             {
@@ -131,9 +146,9 @@ namespace HardenedRaids
         {
             if (parms == null) return true;
             Pending.Remove(parms);
-            int n = ClusterSplit.CountFor(parms.points);
-            if (n <= 1) return true;
-            var split = new Split { n = n, per = parms.points / n, total = parms.points };
+            int needed = ClusterSplit.CountFor(parms.points);
+            if (needed <= 1) return true;
+            var split = new Split { n = ClusterSplit.Capped(needed), per = parms.points / needed, total = parms.points };
             ClusterSplit.GatePoints = split.total;
             try { parms.mechClusterSketch = MechClusterGenerator.GenerateClusterSketch(split.per, parms.target as Map); }
             finally { ClusterSplit.GatePoints = -1f; }
