@@ -397,6 +397,10 @@ namespace HardenedRaids
 
         public static bool NeedsCrew(Pawn v) => DriverSeats(v) > 0;
 
+        /// <summary>Le pawn tient un poste de pilote du véhicule.</summary>
+        public static bool Drives(Pawn v, Pawn p) =>
+            v is VehiclePawn vp && vp.handlers != null && vp.handlers.Any(h => Moves(h) && h.thingOwner.Contains(p));
+
         /// <summary>Monte à bord : poste de pilote d'abord si demandé, puis tireur manquant, puis passager.</summary>
         public static bool TryBoard(Pawn v, Pawn p, bool driver)
         {
@@ -456,6 +460,29 @@ namespace HardenedRaids
                 vp.Faction.kidnapped.Kidnap(x, vp);
                 HRLog.Msg($"{vp.LabelShort} emporte {x.LabelShort}.");
             }
+        }
+
+        /// <summary>
+        /// Préparation de la désactivation : un colon (ou tout pawn d'une autre faction) à bord d'un véhicule de convoi est
+        /// déposé à côté. Le véhicule passe dans un lord vanilla ou VF : KidnapAboard ne vaudrait plus et il l'emporterait
+        /// sans enlèvement enregistré (perdu). Retrait direct (pas DisembarkPawn : VF le mettrait dans le lord du véhicule).
+        /// </summary>
+        public static int DropCaptives(Pawn vehicle)
+        {
+            if (vehicle is not VehiclePawn vp || !vp.Spawned || vp.Faction == null) return 0;
+            var victims = new List<Pawn>();
+            foreach (Thing t in vp.inventory.innerContainer) if (t is Pawn x) victims.Add(x);
+            if (vp.handlers != null) foreach (VehicleRoleHandler h in vp.handlers) victims.AddRange(h.thingOwner.InnerListForReading);
+            int n = 0;
+            foreach (Pawn x in victims.Distinct().ToList())
+            {
+                if (x.Faction == null || x.Faction == vp.Faction || !x.RaceProps.Humanlike || x.Dead) continue;
+                if (!vp.RemovePawn(x)) continue;
+                if (!GenPlace.TryPlaceThing(x, vp.Position, vp.Map, ThingPlaceMode.Near)) GenSpawn.Spawn(x, CellFinder.RandomClosewalkCellNear(vp.Position, vp.Map, 6), vp.Map);
+                n++;
+                HRLog.Msg($"désactivation : {x.LabelShort} déposé(e) par {vp.LabelShort}.");
+            }
+            return n;
         }
 
         public static bool IsExiting(Pawn v) => v.CurJob != null && v.CurJob.exitMapOnArrival;

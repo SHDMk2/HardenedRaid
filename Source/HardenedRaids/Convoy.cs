@@ -317,7 +317,8 @@ namespace HardenedRaids
         }
 
         // ------------------------------------------------------------ débarquement d'un véhicule
-        public void Unload(Pawn v, Map map)
+        /// <param name="keepDriver">camion : le pilote reste à bord (préparation de la désactivation : le camion repart seul)</param>
+        public void Unload(Pawn v, Map map, bool keepDriver = false)
         {
             if (unloaded.Contains(v)) return;
             unloaded.Add(v);
@@ -328,6 +329,7 @@ namespace HardenedRaids
             foreach (Pawn p in VehicleCompat.PawnsAboard(v).ToList())
             {
                 if (!truck && !dismount.Contains(p)) continue;   // blindé : pilote et tireurs restent
+                if (truck && keepDriver && VehicleCompat.Drives(v, p)) continue;
                 VehicleCompat.Disembark(v, p);
                 if (!p.Spawned) continue;
                 if (p.GetLord() == null) inf.AddPawn(p);
