@@ -26,9 +26,10 @@ namespace HardenedRaids
     /// </summary>
     public static class SettlementDefense
     {
-        /// <summary>Génération en cours d'une colonie hostile (null sinon). Vidé à la fin de MapGenerator.GenerateMap.</summary>
+        /// <summary>Génération en cours d'une colonie hostile (null sinon). Un par MapGenerator.GenerateMap actif.</summary>
         public class Context
         {
+            public Game game;
             public Map map;
             public Faction faction;
             public float points;       // points des défenseurs
@@ -38,7 +39,34 @@ namespace HardenedRaids
             public readonly HashSet<ThingDef> turretDefs = new HashSet<ThingDef>(); // modèles posés par nous
         }
 
-        public static Context Current;
+        // Un contexte par génération de carte active (pile) : chaque MapGenerator.GenerateMap part sans contexte, celui de la
+        // génération englobante est remis à la fin (finalizer, même sur exception). Hors génération : jamais de contexte.
+        // La pile est bornée par l'imbrication des générations et vidée au changement de partie.
+        private static Context current;
+        private static readonly List<Context> outer = new List<Context>();
+        private static int depth;
+        private static Game stackGame;
+
+        /// <summary>Contexte de la génération de carte en cours (null hors génération ou si ce n'est pas une colonie hostile).</summary>
+        public static Context Current => current != null && current.game == Verse.Current.Game ? current : null;
+
+        /// <summary>Début de MapGenerator.GenerateMap : le contexte englobant est mis de côté.</summary>
+        public static void GenerationBegin()
+        {
+            if (stackGame != Verse.Current.Game) { outer.Clear(); depth = 0; current = null; stackGame = Verse.Current.Game; }
+            outer.Add(current);
+            current = null;
+            depth++;
+        }
+
+        /// <summary>Fin de MapGenerator.GenerateMap (toujours appelé) : contexte de cette génération jeté, l'englobant remis.</summary>
+        public static void GenerationEnd()
+        {
+            if (depth <= 0 || outer.Count == 0) { current = null; depth = 0; outer.Clear(); return; }
+            depth--;
+            current = outer[outer.Count - 1];
+            outer.RemoveAt(outer.Count - 1);
+        }
 
         public static readonly FloatRange VanillaPoints = new FloatRange(1150f, 1600f);
 
@@ -68,18 +96,20 @@ namespace HardenedRaids
         /// <summary>Crée le contexte pour la carte en génération si c'est une colonie hostile ; renvoie les points des défenseurs.</summary>
         public static Context Begin(Map map, Faction rpFaction)
         {
-            if (Current != null && Current.map == map) return Current;
+            if (depth <= 0 || map == null) return null;   // hors génération de carte : vanilla, aucun contexte posé
+            Context cur = Current;
+            if (cur != null) return cur.map == map ? cur : null;
             Faction f = HostileSettlementFaction(map);
             if (f == null || (rpFaction != null && rpFaction != f)) return null;
             float vanilla = VanillaPoints.RandomInRange;
             float points = vanilla;
             if (HRSettings.UncapPoints && HRSettings.SettlementThreatShare > 0f)
                 points = Mathf.Max(vanilla, PlayerThreatNow() * HRSettings.SettlementThreatShare);
-            var ctx = new Context { map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points) };
+            var ctx = new Context { game = Verse.Current.Game, map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points) };
             ctx.expectedDefenders = EstimateDefenders(f, points);
             // servants : au plus 1 défenseur sur 10 (les autres restent mobiles)
             ctx.mannedLeft = ctx.expectedDefenders / 10;
-            Current = ctx;
+            current = ctx;
             HRLog.Msg($"colonie hostile {f.Name} : défenseurs {points:F0} pts (vanilla {vanilla:F0}, part {HRSettings.SettlementThreatShare:P0}), palier {ctx.tierX:F2}, ~{ctx.expectedDefenders} défenseurs prévus");
             return ctx;
         }
@@ -97,8 +127,6 @@ namespace HardenedRaids
             catch (Exception e) { HRLog.Msg("estimation des défenseurs : " + e.Message); }
             return Mathf.Max(1, Mathf.RoundToInt(points / 120f));
         }
-
-        public static void End() => Current = null;
 
         /// <summary>Points à imposer quand le générateur n'a pas reçu de points explicites (null = ne rien changer).</summary>
         public static float? PointsFor(Map map, Faction rpFaction)
@@ -309,12 +337,12 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(MapGenerator), nameof(MapGenerator.GenerateMap))]
     public static class Patch_SettlementAfterGen
     {
+        public static void Prefix() => SettlementDefense.GenerationBegin();
+
         public static void Postfix(Map __result)
         {
             SettlementDefense.Context ctx = SettlementDefense.Current;
-            if (ctx == null) return;
-            SettlementDefense.End();
-            if (__result == null || ctx.map != __result) return;
+            if (ctx == null || __result == null || ctx.map != __result) return;
             try
             {
                 // défenseurs : pawns humains de la faction, valides, dans un lord de défense de base
@@ -334,9 +362,7 @@ namespace HardenedRaids
         // LordJob_DefendBase vanilla, ou LordJob_DefendBaseNoEat de KCSG
         private static bool IsDefendLord(LordJob j) => j != null && (j is LordJob_DefendBase || j.GetType().Name.StartsWith("LordJob_DefendBase"));
 
-        public static void Finalizer(Exception __exception)
-        {
-            if (__exception != null) SettlementDefense.End();   // génération ratée : pas de contexte résiduel
-        }
+        // toujours, même sur exception : contexte de cette génération jeté, celui d'une génération englobante remis
+        public static void Finalizer() => SettlementDefense.GenerationEnd();
     }
 }
