@@ -12,20 +12,15 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(StorytellerUtility), nameof(StorytellerUtility.DefaultThreatPointsNow))]
     public static class PointsPatches
     {
-        // courbes richesse -> points (et facteurs liés à la richesse), prolongées avec la pente du dernier segment.
+        // courbes richesse -> points, prolongées avec la pente du dernier segment.
         // FixedWealthModeMapWealthFromTimeCurve : jours -> richesse du mode « richesse fixe » (sature à 2,5M après 1800 jours).
+        // Absentes (P9) : PointsFactorForColonyMechsCurve / PointsFactorForColonySubhumanCurve (part du combatPower des
+        // mécas et sous-humains de la colonie (Pawn.IsSubhuman : mutants, goules…) comptée en menace, 0,2 → 0,4 à 1M). Prolongées par la pente, elles dépasseraient 1 (un
+        // méca compterait plus qu'un colon) : laissées vanilla, plates à 0,4 après 1M.
         private static readonly string[] CurveFields =
         {
             "PointsPerWealthCurve", "PointsPerColonistByWealthCurve",
-            "PointsFactorForColonyMechsCurve", "PointsFactorForColonySubhumanCurve",
             "FixedWealthModeMapWealthFromTimeCurve",
-        };
-        // facteurs des mécas / animaux de colonie (richesse -> part du combatPower comptée en menace) : vanilla 0,2 → 0,4 à 1M,
-        // jamais plus. Prolongés par la pente, ils dépasseraient 1 (un méca compterait plus qu'un colon) : bornés à leur
-        // maximum vanilla, donc laissés plats après 1M (pas de point ajouté).
-        private static readonly HashSet<string> Bounded = new HashSet<string>
-        {
-            "PointsFactorForColonyMechsCurve", "PointsFactorForColonySubhumanCurve",
         };
         private static readonly Dictionary<string, List<CurvePoint>> originals = new Dictionary<string, List<CurvePoint>>();
 
@@ -69,7 +64,7 @@ namespace HardenedRaids
                     originals[name] = orig;
                 }
                 var pts = new List<CurvePoint>(orig);
-                if (HRSettings.ExtendWealthCurves && pts.Count >= 2 && !Bounded.Contains(name))
+                if (HRSettings.ExtendWealthCurves && pts.Count >= 2)
                 {
                     CurvePoint a = pts[pts.Count - 2], b = pts[pts.Count - 1];
                     float slope = (b.y - a.y) / (b.x - a.x);
