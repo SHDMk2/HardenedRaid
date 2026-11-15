@@ -158,24 +158,31 @@ namespace HardenedRaids
                 // toujours dans son lord) -> laissé sur place sans lord, comme un véhicule abandonné du convoi (VF le rend
                 // revendicable une fois la faction partie) ; ses occupants descendent et rejoignent l'infanterie ou la sortie.
                 var stranded = new HashSet<Pawn>(l.ownedPawns.Where(v => StrandedVF(v, fight: !leave)));
+                // DU5 : fantassin du lord du convoi (débarqué que VF a remis dans le lord du véhicule, sans notre prefix de
+                // SpawnPawnNearVehicle) : ni blindé ni camion, il rejoint l'infanterie (raid en cours) ou la sortie
+                var onFoot = new HashSet<Pawn>(l.ownedPawns.Where(p => !VehicleGate.IsVehicle(p)));
+                bool Skip(Pawn p) => stranded.Contains(p) || onFoot.Contains(p);
                 Lord main, exit;
                 // raid en cours : les blindés continuent l'assaut (lord VF), les camions repartent
-                if (leave) Replace(l, map, ExitJob, null, stranded.Contains, out main, out exit);
-                else Replace(l, map, () => ArmoredJobVF(f), v => !HasTurretsVF(v), stranded.Contains, out main, out exit);
+                if (leave) Replace(l, map, ExitJob, null, Skip, out main, out exit);
+                else Replace(l, map, () => ArmoredJobVF(f), v => !HasTurretsVF(v), Skip, out main, out exit);
                 if (leave) exit = main;
                 foreach (Lord nl in new[] { main, exit }.Where(x => x != null).Distinct())
                     foreach (Pawn v in nl.ownedPawns) ReadyVF(v);   // moteur démarré : VF refuse de bouger sinon
                 if (f == null) continue;
                 Lord foot = null;
+                void Join(Pawn p)
+                {
+                    // passager : il garde son lord (infanterie, rembarquement)
+                    if (p == null || p.Destroyed || p.Dead || p.GetLord() != null) return;
+                    foot ??= leave ? exit ?? LordMaker.MakeNewLord(f, ExitJob(), map) : InfantryLordOf(job, map, f);
+                    foot.AddPawn(p);
+                }
+                foreach (Pawn p in onFoot) Join(p);
                 foreach (Pawn v in stranded)
                 {
                     List<Pawn> down = EmptyOutVF(v);
-                    foreach (Pawn p in down)
-                    {
-                        if (p.GetLord() != null) continue;   // passager : il garde son lord (infanterie, rembarquement)
-                        foot ??= leave ? exit ?? LordMaker.MakeNewLord(f, ExitJob(), map) : InfantryLordOf(job, map, f);
-                        foot.AddPawn(p);
-                    }
+                    foreach (Pawn p in down) Join(p);
                     HRLog.Msg($"désactivation : {v.LabelShort} ne peut ni partir ni se battre, laissé sur place ({down.Count} occupant(s) descendu(s)).");
                 }
             }
@@ -205,13 +212,14 @@ namespace HardenedRaids
         private static void DropCaptivesVF(Pawn v) => VehicleCompat.DropCaptives(v);
 
         /// <summary>
-        /// Ni départ ni combat possible : sans pilote (après avoir mis un passager au volant) ou immobilisé. Pendant le raid,
-        /// un blindé immobilisé qui a encore ses tireurs se bat sur place ; une pièce en batterie (ou qui se replie) n'est pas bloquée.
+        /// Véhicule qui ne peut ni partir ni se battre : sans pilote (après avoir mis un passager au volant) ou immobilisé. Pendant
+        /// le raid, un blindé immobilisé qui a encore ses tireurs se bat sur place ; une pièce en batterie (ou qui se replie)
+        /// n'est pas bloquée. Jamais vrai pour un pawn qui n'est pas un véhicule (traité à part, comme fantassin).
         /// </summary>
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static bool StrandedVF(Pawn v, bool fight)
         {
-            if (!v.Spawned || VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v)) return false;
+            if (!VehicleCompat.IsVehicle(v) || !v.Spawned || VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v)) return false;
             VehicleCompat.PromoteDriver(v);
             if (VehicleCompat.CanMove(v)) return false;
             return !(fight && VehicleCompat.HasTurrets(v) && VehicleCompat.PawnsAboard(v).Any());
