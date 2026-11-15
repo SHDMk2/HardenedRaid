@@ -62,10 +62,12 @@ namespace HardenedRaids
             Disarm();   // une seule fois : les tirages imbriqués éventuels ne sont pas concernés
             List<PawnGenOptionWithXenotype> list = result as List<PawnGenOptionWithXenotype> ?? result.ToList();
             int n = list.Count;
-            if (n <= cap * 1.1f) return;     // même tolérance que le plan Hardened : pas de mini-vague
-            int waves = Mathf.CeilToInt(n / (float)cap);
             float totalCost = list.Sum(o => o.Cost);
             bool canWave = frame != null && frame.Wave == null && !frame.DebugTest && frame.Parms != null && totalCost > 0f;
+            // comme le plan Hardened (RaidPlan.Make) : tolérance de 10 % dans un raid (pas de mini-vague) ; hors raid
+            // (colonie ×2 : DU2, autres groupes ×1) plafond strict, au pawn près
+            if (frame != null ? n <= cap * 1.1f : n <= cap) return;
+            int waves = Mathf.CeilToInt(n / (float)cap);
             // vagues égales ; sans vagues (hors raid, vague 2+), on garde tout le plafond
             int keep = canWave ? Mathf.CeilToInt(n / (float)waves) : cap;
             // le chef reste dans la première vague
