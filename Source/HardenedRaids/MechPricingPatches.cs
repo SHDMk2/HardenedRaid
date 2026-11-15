@@ -158,7 +158,10 @@ namespace HardenedRaids
             }
             if (!all.Any(MechPricing.IsHeavy)) return PawnUtility.GetCombatPawnKindsForPoints(selector, points, selectionWeight);
 
-            ArmorGate gate = ArmorGate.For(points);
+            // blocage des blindés sur la menace (portée active, sinon monde) comme les autres chemins, pas sur le budget local
+            // (≈ 0,2 × menace) ; pendant un chargement : repli sur le budget local
+            float threat = MechPricing.ThreatPointsFor(null);
+            ArmorGate gate = ArmorGate.For(threat >= 0f ? threat : points);
             var cost = new Dictionary<PawnKindDef, float>(all.Count);
             foreach (PawnKindDef k in all) cost[k] = MechPricing.Cost(k, gate);
             selectionWeight ??= _ => 1f;
