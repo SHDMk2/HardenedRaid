@@ -43,6 +43,9 @@ namespace HardenedRaids
             ("RimWorld.CompMechhiveAssembler", "MaxThreatPointsCurve"),                      // 10000 -> 1250
             ("RimWorld.GenStep_InsectLairCave", "CocoonThreatPointsCurve"),                  // 10000 -> 2500
             ("RimWorld.UndercaveMapComponent", "ThreatPointsCurve"),                         // 8000 -> 3000
+            // Volontairement absente : CompObelisk_Duplicator.CombatPointsSpawnPointsCurve (5000 -> 200) est le COÛT d'un
+            // double, retiré de 0,6 × menace (déjà déplafonnée) : figée, le nombre de doubles croît avec la menace (30 à 10k,
+            // 300 à 100k) ; prolongée, il resterait bloqué à 30.
         };
 
         /// <summary>Scripts de quête contenant des QuestNode_EvaluateSimpleCurve points → points à prolonger.</summary>
