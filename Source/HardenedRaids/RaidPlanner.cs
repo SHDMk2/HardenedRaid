@@ -34,7 +34,7 @@ namespace HardenedRaids
         public float frac;     // part du noyau (palier haut)
         public float avgPrice; // prix moyen prévu d'un raider (noyau et troupe au prorata)
 
-        /// <summary>Colonie de faction (D2) : une seule vague, jusqu'à ce multiple du plafond par vague ; le surplus est perdu.</summary>
+        /// <summary>Colonie de faction (DU2) : une seule vague, jusqu'à ce multiple du plafond par vague ; le surplus est perdu.</summary>
         public const int SettlementCapFactor = 2;
 
         /// <param name="allowWaves">false hors raid (navette écrasée, embuscade, site…) : une seule vague, plafonnée.</param>
@@ -166,7 +166,7 @@ namespace HardenedRaids
             if (GenContext.NonCombat > 0) return false;   // cadavres d'une colonie abandonnée, d'un appel de détresse…
             Faction f = parms.faction;
             if (f == null || f.IsPlayer || !f.def.humanlikeFaction) return false;
-            // D1 : colonie neutre / alliée attaquée, carte générée avant le passage à l'hostilité → traitée comme hostile
+            // DU1 : colonie neutre / alliée attaquée, carte générée avant le passage à l'hostilité → traitée comme hostile
             if (!f.HostileTo(Faction.OfPlayer) && !SettlementDefense.TreatAsHostile(parms)) return false;
             if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return false;
             return true;
@@ -174,13 +174,20 @@ namespace HardenedRaids
 
         /// <summary>
         /// Multiple du plafond par vague d'un groupe hors raid : défenseurs d'une colonie de faction (groupe Settlement sur la
-        /// case d'une colonie, pas un avant-poste ni un site) → <see cref="RaidPlan.SettlementCapFactor"/> (D2), sinon 1.
+        /// case d'une colonie, pas un avant-poste ni un site) → <see cref="RaidPlan.SettlementCapFactor"/> (DU2), sinon 1.
         /// </summary>
         internal static int SingleWaveCapFactor(PawnGroupMakerParms parms)
         {
             if (parms?.groupKind != PawnGroupKindDefOf.Settlement || !parms.tile.Valid) return 1;
             return Find.WorldObjects?.SettlementAt(parms.tile) != null ? RaidPlan.SettlementCapFactor : 1;
         }
+
+        /// <summary>
+        /// Graine du groupe : parms.seed, sinon celle de la colonie en génération (SettlementDefense.Context.seed, R3) :
+        /// vanilla ne donne pas de graine aux défenseurs d'une colonie (GenStep_Settlement), l'aperçu (lits de
+        /// SymbolResolver_Settlement) et la génération réelle tireraient chacun la leur. null = tirage libre.
+        /// </summary>
+        internal static int? SeedFor(PawnGroupMakerParms parms) => parms?.seed ?? SettlementDefense.SeedFor(parms);
 
         private static bool StrategyNeedsBreachers(RaidStrategyDef s, out Func<PawnKindDef, bool> isRequired)
         {
@@ -197,8 +204,9 @@ namespace HardenedRaids
             bool inRaid = frame != null && frame.IsMainGroup(parms);
             WaveEntry wave = inRaid ? frame.Wave : null;
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out Func<PawnKindDef, bool> isRequired);
-            // graine du groupe si fournie (sites, colonies) : la génération réelle concorde avec l'aperçu
-            var rng = new System.Random(parms.seed ?? Rand.Int);
+            // graine du groupe si fournie (sites), ou celle de la colonie en génération : la génération réelle concorde avec l'aperçu
+            int? seed = SeedFor(parms);
+            var rng = new System.Random(seed ?? Rand.Int);
             float tierX = wave?.tierX ?? Tiers.TierX(parms.faction.def, parms.points);
             if (tierX < 1f) return false;
             if (inRaid) frame.TierX = tierX;
@@ -296,8 +304,24 @@ namespace HardenedRaids
                         infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - kept);
                         plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven) ?? plan;
                         waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped2, out waveVehicleCost);
+                        bool refunded2 = false;
+                        if (dropped2 > 0)
+                        {
+                            // R6 : en principe impossible (plus de points → autant de vagues ou plus) ; sinon le coût des
+                            // véhicules encore écartés revient aussi à l'infanterie. Ceux placés gardent leur vague ; les
+                            // vagues ajoutées par le plan refait partent sans véhicule.
+                            infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - waveVehicleCost.Sum());
+                            RaidPlan plan2 = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven);
+                            if (plan2 != null && plan2.waves >= waveVehicles.Count)
+                            {
+                                plan = plan2;
+                                while (waveVehicles.Count < plan.waves) waveVehicles.Add(new List<ThingDef>());
+                                if (waveVehicleCost.Length < plan.waves) Array.Resize(ref waveVehicleCost, plan.waves);
+                                refunded2 = true;
+                            }
+                        }
                         HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague non achetés, coût rendu à l'infanterie ({infantryPoints:F0} pts)"
-                                  + (dropped2 > 0 ? $", {dropped2} abandonné(s)." : "."));
+                                  + (dropped2 > 0 ? $", {dropped2} de plus écarté(s){(refunded2 ? ", coût rendu aussi" : ", coût perdu")}." : "."));
                     }
                     vehicles = waveVehicles[0];
                     if (plan.waves > 1) plan.SetWaveCount(WaveCounts(plan, waveVehicleCost, raidPoints)[0]);
@@ -311,7 +335,7 @@ namespace HardenedRaids
             }
 
             // ---- choix des pawnkinds et répartition noyau / troupe (commun avec l'aperçu GeneratePawnKindsExample)
-            List<Slot> slots = BuildSlots(parms, groupMaker, plan, plan.thisWave, rng);
+            List<Slot> slots = BuildSlots(parms, groupMaker, plan, plan.thisWave, rng, seed);
             if (slots.Count == 0) return false;
             MarkRequiredBreachers(slots, parms, isRequired);
             AssignRoles(slots.Where(s => s.loadout == plan.core?.loadout).ToList());
@@ -408,14 +432,14 @@ namespace HardenedRaids
 
         /// <summary>
         /// Choix des pawnkinds (règles vanilla : chef unique, pawns requis par la stratégie, xénotypes) et répartition noyau / troupe.
-        /// Avec parms.seed, le tirage Verse est fait sous cette graine, comme ChoosePawnGenOptionsByPoints.
+        /// Avec une graine (<see cref="SeedFor"/>), le tirage Verse est fait sous cette graine, comme ChoosePawnGenOptionsByPoints.
         /// </summary>
-        private static List<Slot> BuildSlots(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, RaidPlan plan, int count, System.Random rng)
+        private static List<Slot> BuildSlots(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, RaidPlan plan, int count, System.Random rng, int? seed)
         {
             var slots = new List<Slot>();
             var chosen = new List<PawnGenOptionWithXenotype>();
             List<PawnGenOptionWithXenotype> order;
-            if (parms.seed.HasValue) Rand.PushState(parms.seed.Value);
+            if (seed.HasValue) Rand.PushState(seed.Value);
             try
             {
                 bool leaderChosen = false;
@@ -432,7 +456,7 @@ namespace HardenedRaids
             }
             finally
             {
-                if (parms.seed.HasValue) Rand.PopState();
+                if (seed.HasValue) Rand.PopState();
             }
             int coreCount = plan.core?.count ?? 0;
             TierDef[] ladder = Tiers.LadderFor(parms.faction.def);
@@ -459,7 +483,8 @@ namespace HardenedRaids
         {
             float tierX = Tiers.TierX(parms.faction.def, parms.points);
             if (tierX < 1f) return null;
-            var rng = new System.Random(parms.seed ?? Rand.Int);
+            int? seed = SeedFor(parms);
+            var rng = new System.Random(seed ?? Rand.Int);
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out _);
             bool raid = parms.raidStrategy != null && parms.groupKind == PawnGroupKindDefOf.Combat;
             // même consommation du générateur que TryGenerate (raid d'origine) : graine des dotations tirée d'abord,
@@ -468,7 +493,7 @@ namespace HardenedRaids
             RaidPlan plan = RaidPlan.Make(parms.faction.def, parms.points, tierX, null, needBreacher, new System.Random(loadoutSeed), allowWaves: raid,
                                           gate: ArmorGate.For(parms.points), gateGiven: true, capFactor: raid ? 1 : SingleWaveCapFactor(parms));
             if (plan == null) return null;
-            List<Slot> slots = BuildSlots(parms, groupMaker, plan, raid ? plan.total : plan.thisWave, rng);
+            List<Slot> slots = BuildSlots(parms, groupMaker, plan, raid ? plan.total : plan.thisWave, rng, seed);
             if (slots.Count == 0) return null;
             return slots.Select(x => x.kind).ToList();
         }

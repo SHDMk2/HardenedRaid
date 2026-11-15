@@ -86,13 +86,20 @@ namespace HardenedRaids
                 return true;
             }
             // non-humains hostiles d'un raid (mécanoïdes…) : plafond low-tech par vague, le reste en vagues (A12 / D5) ;
-            // humains d'un raid sans paliers (EnableTiers décoché) : même plafond par vague que les paliers (D3)
+            // humains d'un raid sans paliers (EnableTiers décoché) : même plafond par vague que les paliers (DU3)
             if (main && parms.faction != null && !parms.faction.IsPlayer && parms.faction.HostileTo(Faction.OfPlayer))
             {
                 if (!parms.faction.def.humanlikeFaction)
                     __state = VanillaWaveCap.Arm(parms, frame, VanillaWaveCap.NonHumanCap);
                 else if (!HRSettings.EnableTiers)
                     __state = VanillaWaveCap.Arm(parms, frame, Tiers.WaveCapFor(parms.faction.def));
+            }
+            // humains hors raid sans paliers (sites, quêtes, embuscades, défenseurs de colonie, y compris neutre / alliée
+            // attaquée : DU1) : une vague au plafond (×SettlementCapFactor pour une colonie, DU2), le surplus est perdu
+            else if (!main)
+            {
+                int cap = VanillaWaveCap.OutOfRaidCap(parms);
+                if (cap > 0) __state = VanillaWaveCap.Arm(parms, null, cap);
             }
             return true;
         }

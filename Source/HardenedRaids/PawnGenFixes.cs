@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using RimWorld;
 using RimWorld.Planet;
@@ -86,7 +87,7 @@ namespace HardenedRaids
     /// <summary>
     /// Aperçus (SitePartWorker_Outpost : nombre d'ennemis ; QuestNode_Raid / QuestGen_Threat : pawnkinds du raid ;
     /// SymbolResolver_Settlement : nombre de lits…) : reflètent la génération Hardened, sans générer de pawn.
-    /// Avec une graine, l'aperçu et la génération réelle tirent la même chose ; résultat mis en cache (le libellé d'un site
+    /// Avec une graine (parms.seed ou celle de la colonie en génération), l'aperçu et la génération réelle tirent la même chose ; résultat mis en cache (le libellé d'un site
     /// peut être demandé à chaque image), une heure de jeu au plus, vidé au changement de partie.
     /// </summary>
     [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), nameof(PawnGroupKindWorker_Normal.GeneratePawnKindsExample))]
@@ -104,10 +105,12 @@ namespace HardenedRaids
             {
                 string key = null;
                 int now = Find.TickManager?.TicksGame ?? 0;
-                if (parms.seed.HasValue)
+                // graine effective (parms.seed ou celle de la colonie en génération) ; la case fixe le facteur ×2 (DU2)
+                int? seed = RaidGenerator.SeedFor(parms);
+                if (seed.HasValue)
                 {
                     if (cacheGame != Current.Game) { cache.Clear(); cacheGame = Current.Game; }
-                    key = $"{parms.faction.loadID}|{parms.groupKind.defName}|{parms.points:F0}|{parms.seed.Value}|{parms.raidStrategy?.defName}|{parms.inhabitants}|{groupMaker.GetHashCode()}";
+                    key = $"{parms.faction.loadID}|{parms.groupKind.defName}|{parms.points:R}|{seed.Value}|{parms.tile}|{parms.raidStrategy?.defName}|{parms.inhabitants}|{groupMaker.GetHashCode()}";
                     if (cache.TryGetValue(key, out var hit) && now - hit.Key < CacheTicks && now >= hit.Key)
                     {
                         __result = hit.Value;
@@ -129,6 +132,21 @@ namespace HardenedRaids
                 Log.Warning("[Hardened Raids] pawn kinds example: " + e.Message);
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Paliers coupés : l'aperçu vanilla d'un groupe hors raid (lits d'une colonie, « N ennemis » d'un site) suit le
+        /// même plafond que sa génération (VanillaWaveCap.OutOfRaidCap). Un aperçu de raid garde toutes ses vagues (DU3).
+        /// </summary>
+        public static void Postfix(PawnGroupMakerParms parms, ref IEnumerable<PawnKindDef> __result)
+        {
+            if (parms == null || __result == null || (parms.raidStrategy != null && parms.groupKind == PawnGroupKindDefOf.Combat)) return;
+            try
+            {
+                int cap = VanillaWaveCap.OutOfRaidCap(parms);
+                if (cap > 0) __result = __result.Take(cap);
+            }
+            catch (Exception e) { Log.Warning("[Hardened Raids] pawn kinds example cap: " + e.Message); }
         }
     }
 }

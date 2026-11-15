@@ -8,10 +8,12 @@ using Verse;
 namespace HardenedRaids
 {
     /// <summary>
-    /// Plafond par vague pour la génération vanilla d'un raid : repli après un échec de la génération Hardened
-    /// (B12 / A10) et factions non humaines (A12 : mécanoïdes…). Le tirage vanilla des pawnkinds
-    /// (ChoosePawnGenOptionsByPoints, rien n'est encore généré) est tronqué au plafond ; le reste part en vagues
-    /// différées, chacune avec les points des pawnkinds qu'elle remplace.
+    /// Plafond par vague pour la génération vanilla d'un groupe : repli après un échec de la génération Hardened
+    /// (B12 / A10), factions non humaines (A12 : mécanoïdes…), humains quand les paliers sont coupés (EnableTiers
+    /// décoché : DU3 pour les raids, <see cref="OutOfRaidCap"/> hors raid). Le tirage vanilla des pawnkinds
+    /// (ChoosePawnGenOptionsByPoints, rien n'est encore généré) est tronqué au plafond. Raid (groupe principal) : le reste
+    /// part en vagues différées, chacune avec les points des pawnkinds qu'elle remplace (tolérance de 10 %). Hors raid :
+    /// une vague, plafond strict (× SettlementCapFactor pour les défenseurs d'une colonie : DU2), surplus perdu.
     /// </summary>
     public static class VanillaWaveCap
     {
@@ -35,6 +37,22 @@ namespace HardenedRaids
             armedFrame = null;
         }
 
+        /// <summary>
+        /// Plafond d'un groupe humain hors raid généré par vanilla (EnableTiers décoché ; avec les paliers, la génération
+        /// Hardened et son repli plafonnent déjà) : groupe hostile (site, quête, embuscade…) au plafond par vague, défenseurs
+        /// d'une colonie en génération, hostile ou neutre / alliée attaquée (DU1), à ce plafond × SettlementCapFactor (DU2).
+        /// Une seule vague, surplus perdu. 0 = pas de plafond.
+        /// </summary>
+        internal static int OutOfRaidCap(PawnGroupMakerParms parms)
+        {
+            if (HRSettings.EnableTiers) return 0;
+            Faction f = parms?.faction;
+            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction) return 0;
+            if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return 0;
+            if (!f.HostileTo(Faction.OfPlayer) && !SettlementDefense.IsDefenderGroup(parms)) return 0;
+            return Tiers.WaveCapFor(f.def) * RaidGenerator.SingleWaveCapFactor(parms);
+        }
+
         /// <summary>Plafond des non-humains : le réglage low-tech (décision D5).</summary>
         public static int NonHumanCap => HRSettings.CapLowTech;
 
@@ -46,10 +64,12 @@ namespace HardenedRaids
             Disarm();   // une seule fois : les tirages imbriqués éventuels ne sont pas concernés
             List<PawnGenOptionWithXenotype> list = result as List<PawnGenOptionWithXenotype> ?? result.ToList();
             int n = list.Count;
-            if (n <= cap * 1.1f) return;     // même tolérance que le plan Hardened : pas de mini-vague
-            int waves = Mathf.CeilToInt(n / (float)cap);
             float totalCost = list.Sum(o => o.Cost);
             bool canWave = frame != null && frame.Wave == null && !frame.DebugTest && frame.Parms != null && totalCost > 0f;
+            // comme le plan Hardened (RaidPlan.Make) : tolérance de 10 % dans un raid (pas de mini-vague) ; hors raid
+            // (colonie ×2 : DU2, autres groupes ×1) plafond strict, au pawn près
+            if (frame != null ? n <= cap * 1.1f : n <= cap) return;
+            int waves = Mathf.CeilToInt(n / (float)cap);
             // vagues égales ; sans vagues (hors raid, vague 2+), on garde tout le plafond
             int keep = canWave ? Mathf.CeilToInt(n / (float)waves) : cap;
             // le chef reste dans la première vague
