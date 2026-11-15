@@ -48,15 +48,16 @@ namespace HardenedRaids
             int n = list.Count;
             if (n <= cap * 1.1f) return;     // même tolérance que le plan Hardened : pas de mini-vague
             int waves = Mathf.CeilToInt(n / (float)cap);
-            int keep = Mathf.CeilToInt(n / (float)waves);
+            float totalCost = list.Sum(o => o.Cost);
+            bool canWave = frame != null && frame.Wave == null && !frame.DebugTest && frame.Parms != null && totalCost > 0f;
+            // vagues égales ; sans vagues (hors raid, vague 2+), on garde tout le plafond
+            int keep = canWave ? Mathf.CeilToInt(n / (float)waves) : cap;
             // le chef reste dans la première vague
             List<PawnGenOptionWithXenotype> ordered = list.OrderByDescending(o => o.Option.kind.factionLeader).ToList();
             List<PawnGenOptionWithXenotype> kept = ordered.Take(keep).ToList();
             List<PawnGenOptionWithXenotype> rest = ordered.Skip(keep).ToList();
             result = kept;
 
-            float totalCost = list.Sum(o => o.Cost);
-            bool canWave = frame != null && frame.Wave == null && !frame.DebugTest && frame.Parms != null && totalCost > 0f;
             HRLog.Msg($"génération vanilla plafonnée ({groupParms.faction?.Name}, {groupParms.points:F0} pts) : {kept.Count}/{n} pawns"
                       + (canWave ? $", {rest.Count} en {waves - 1} vague(s) différée(s)." : ", le reste est abandonné."));
             if (!canWave) return;

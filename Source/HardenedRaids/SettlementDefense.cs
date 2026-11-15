@@ -90,7 +90,8 @@ namespace HardenedRaids
             {
                 if (HRSettings.EnableTiers)
                 {
-                    RaidPlan plan = RaidPlan.Make(f.def, points, null, null, false, new System.Random(Rand.Int), allowWaves: false);
+                    RaidPlan plan = RaidPlan.Make(f.def, points, null, null, false, new System.Random(Rand.Int), allowWaves: false,
+                                                  capFactor: RaidPlan.SettlementCapFactor);
                     if (plan != null) return plan.total;
                 }
             }
