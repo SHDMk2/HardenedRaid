@@ -160,7 +160,8 @@ namespace HardenedRaids
                 var stranded = new HashSet<Pawn>(l.ownedPawns.Where(v => StrandedVF(v, fight: !leave)));
                 // DU5 : fantassin du lord du convoi (débarqué que VF a remis dans le lord du véhicule, sans notre prefix de
                 // SpawnPawnNearVehicle) : ni blindé ni camion, il rejoint l'infanterie (raid en cours) ou la sortie
-                var onFoot = new HashSet<Pawn>(l.ownedPawns.Where(p => !VehicleGate.IsVehicle(p)));
+                // seulement s'il est posé : un pawn encore à bord (non apparu) reste avec son véhicule
+                var onFoot = new HashSet<Pawn>(l.ownedPawns.Where(p => p.Spawned && !VehicleGate.IsVehicle(p)));
                 bool Skip(Pawn p) => stranded.Contains(p) || onFoot.Contains(p);
                 Lord main, exit;
                 // raid en cours : les blindés continuent l'assaut (lord VF), les camions repartent
