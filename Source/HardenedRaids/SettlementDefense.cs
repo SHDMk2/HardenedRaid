@@ -39,6 +39,7 @@ namespace HardenedRaids
             public float tierX;
             public int expectedDefenders;
             public int mannedLeft;     // tourelles servies encore autorisées
+            public int seed;           // R3 : graine des défenseurs (aperçu = génération), tirée une fois, jamais sauvegardée
             public readonly HashSet<ThingDef> turretDefs = new HashSet<ThingDef>(); // modèles posés par nous
             public readonly List<Servant> servants = new List<Servant>();           // P12 : servants vanilla non générés
         }
@@ -142,7 +143,7 @@ namespace HardenedRaids
             // tourelles et véhicules ne dépendent que de leurs propres réglages.
             if (HRSettings.SettlementThreatShare > 0f)
                 points = Mathf.Max(vanilla, Mathf.Min(PlayerThreatNow(), PointsPatches.MaxPoints()) * HRSettings.SettlementThreatShare);
-            var ctx = new Context { game = Verse.Current.Game, map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points) };
+            var ctx = new Context { game = Verse.Current.Game, map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points), seed = Rand.Int };
             ctx.expectedDefenders = EstimateDefenders(f, points);
             // servants : au plus 1 défenseur sur 10 (les autres restent mobiles)
             ctx.mannedLeft = ctx.expectedDefenders / 10;
@@ -172,6 +173,17 @@ namespace HardenedRaids
             return Mathf.Clamp(Mathf.RoundToInt(points / 120f), 1, cap);
         }
 
+        /// <summary>
+        /// R3 : graine des groupes de défenseurs de la colonie en génération (sur sa case), pour l'aperçu comme pour la
+        /// génération ; null hors génération d'une colonie défendue.
+        /// </summary>
+        public static int? SeedFor(PawnGroupMakerParms parms)
+        {
+            if (!IsDefenderGroup(parms)) return null;
+            Context c = Current;
+            return c.map?.Tile == parms.tile ? c.seed : (int?)null;
+        }
+
         /// <summary>Points à imposer quand le générateur n'a pas reçu de points explicites (null = ne rien changer).</summary>
         public static float? PointsFor(Map map, Faction rpFaction)
         {
@@ -195,6 +207,30 @@ namespace HardenedRaids
                 if (p.HasValue) rp.settlementPawnGroupPoints = p.Value;
             }
             catch (Exception e) { Log.Warning("[Hardened Raids] settlement defenders: " + e.Message); }
+        }
+    }
+
+    // ---------------------------------------------------------------- R3 : choix du PawnGroupMaker sous la graine de la colonie
+    /// <summary>
+    /// GeneratePawnKindsExample (lits) et GeneratePawns tirent chacun leur PawnGroupMaker ; vanilla ne les accorde que
+    /// avec parms.seed. Sans graine, celle de la colonie en génération (SettlementDefense.SeedFor) : même choix des deux côtés.
+    /// </summary>
+    [HarmonyPatch(typeof(PawnGroupMakerUtility), nameof(PawnGroupMakerUtility.TryGetRandomPawnGroupMaker))]
+    public static class Patch_SettlementGroupMakerSeed
+    {
+        public static void Prefix(PawnGroupMakerParms parms, out bool __state)
+        {
+            __state = false;
+            if (parms == null || parms.seed.HasValue) return;
+            int? seed = SettlementDefense.SeedFor(parms);
+            if (!seed.HasValue) return;
+            Rand.PushState(seed.Value);
+            __state = true;
+        }
+
+        public static void Finalizer(bool __state)
+        {
+            if (__state) Rand.PopState();
         }
     }
 
