@@ -81,12 +81,19 @@ namespace HardenedRaids
                 }
                 // repli vanilla : rien de ce qui a été prévu (vagues, véhicules) ne vaut, mais le plafond par vague reste
                 if (main) frame.CancelPlanned();
-                __state = VanillaWaveCap.Arm(parms, main ? frame : null, Tiers.WaveCapFor(parms.faction.def));
+                __state = VanillaWaveCap.Arm(parms, main ? frame : null,
+                                             Tiers.WaveCapFor(parms.faction.def) * (main ? 1 : RaidGenerator.SingleWaveCapFactor(parms)));
                 return true;
             }
-            // non-humains hostiles d'un raid (mécanoïdes…) : plafond low-tech par vague, le reste en vagues (A12 / D5)
-            if (main && parms.faction != null && !parms.faction.def.humanlikeFaction && parms.faction.HostileTo(Faction.OfPlayer))
-                __state = VanillaWaveCap.Arm(parms, frame, VanillaWaveCap.NonHumanCap);
+            // non-humains hostiles d'un raid (mécanoïdes…) : plafond low-tech par vague, le reste en vagues (A12 / D5) ;
+            // humains d'un raid sans paliers (EnableTiers décoché) : même plafond par vague que les paliers (D3)
+            if (main && parms.faction != null && !parms.faction.IsPlayer && parms.faction.HostileTo(Faction.OfPlayer))
+            {
+                if (!parms.faction.def.humanlikeFaction)
+                    __state = VanillaWaveCap.Arm(parms, frame, VanillaWaveCap.NonHumanCap);
+                else if (!HRSettings.EnableTiers)
+                    __state = VanillaWaveCap.Arm(parms, frame, Tiers.WaveCapFor(parms.faction.def));
+            }
             return true;
         }
 

@@ -32,12 +32,17 @@ namespace HardenedRaids
         public int ncos, officers; // grades de cette vague
         public ArmorGate gate;
         public float frac;     // part du noyau (palier haut)
+        public float avgPrice; // prix moyen prévu d'un raider (noyau et troupe au prorata)
+
+        /// <summary>Colonie de faction (D2) : une seule vague, jusqu'à ce multiple du plafond par vague ; le surplus est perdu.</summary>
+        public const int SettlementCapFactor = 2;
 
         /// <param name="allowWaves">false hors raid (navette écrasée, embuscade, site…) : une seule vague, plafonnée.</param>
+        /// <param name="capFactor">hors raid seulement : multiple du plafond par vague (<see cref="SettlementCapFactor"/> pour une colonie).</param>
         /// <param name="rng">sert uniquement aux dotations : même graine = même dotation (vagues d'un même raid).</param>
         /// <param name="gateGiven">true : <paramref name="gate"/> (null = sans plafond) est le plafond d'armure du raid entier.</param>
         public static RaidPlan Make(FactionDef f, float points, float? xOverride, int? countOverride, bool needBreacher, System.Random rng, bool allowWaves = true,
-                                    ArmorGate gate = null, bool gateGiven = false)
+                                    ArmorGate gate = null, bool gateGiven = false, int capFactor = 1)
         {
             float x = xOverride ?? Tiers.TierX(f, points);
             if (x < 1f) return null;
@@ -54,7 +59,7 @@ namespace HardenedRaids
             float hiPrice = lo == hi ? loPrice : Pricing.ExpectedPrice(f, ladder[hi], hi, hiLoadout);
             float avg = Mathf.Max(1f, (1f - frac) * loPrice + frac * hiPrice);
 
-            var p = new RaidPlan { faction = f, points = points, tierX = x, gate = gate, frac = frac };
+            var p = new RaidPlan { faction = f, points = points, tierX = x, gate = gate, frac = frac, avgPrice = avg };
             if (countOverride.HasValue)
             {
                 p.total = p.thisWave = Mathf.Max(1, countOverride.Value);
@@ -64,9 +69,13 @@ namespace HardenedRaids
             {
                 p.total = Mathf.Max(1, Mathf.FloorToInt(points / avg));
                 int cap = Tiers.WaveCapFor(f);
-                if (!allowWaves) p.total = Mathf.Min(p.total, cap);
+                if (!allowWaves)
+                {
+                    p.total = Mathf.Min(p.total, cap * Mathf.Max(1, capFactor));
+                    p.waves = 1;
+                }
                 // un reste de moins de 10 % est absorbé par la vague, pas de mini-vague inutile
-                p.waves = p.total > cap * 1.1f ? Mathf.CeilToInt(p.total / (float)cap) : 1;
+                else p.waves = p.total > cap * 1.1f ? Mathf.CeilToInt(p.total / (float)cap) : 1;
                 p.thisWave = Mathf.CeilToInt(p.total / (float)p.waves);
             }
 
@@ -161,6 +170,16 @@ namespace HardenedRaids
             return true;
         }
 
+        /// <summary>
+        /// Multiple du plafond par vague d'un groupe hors raid : défenseurs d'une colonie de faction (groupe Settlement sur la
+        /// case d'une colonie, pas un avant-poste ni un site) → <see cref="RaidPlan.SettlementCapFactor"/> (D2), sinon 1.
+        /// </summary>
+        internal static int SingleWaveCapFactor(PawnGroupMakerParms parms)
+        {
+            if (parms?.groupKind != PawnGroupKindDefOf.Settlement || !parms.tile.Valid) return 1;
+            return Find.WorldObjects?.SettlementAt(parms.tile) != null ? RaidPlan.SettlementCapFactor : 1;
+        }
+
         private static bool StrategyNeedsBreachers(RaidStrategyDef s, out Func<PawnKindDef, bool> isRequired)
         {
             isRequired = null;
@@ -221,8 +240,28 @@ namespace HardenedRaids
                 vehicles = wave.ResolveVehicles();
             }
 
-            RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, loadoutBreacher, LoadoutRng(), inRaid, gate, gateGiven);
+            RaidPlan plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, wave?.count, loadoutBreacher, LoadoutRng(), inRaid, gate, gateGiven,
+                                          inRaid ? 1 : SingleWaveCapFactor(parms));
             if (plan == null) return false;
+
+            // ---- vague 2+ arrivée sans ses véhicules (autre mode d'arrivée, véhicules / VF coupés, defs retirées) : leur
+            //      coût, déduit de son infanterie à la planification, lui revient (au plus le plafond par vague, +10 %)
+            if (wave != null && wave.vehicleCost > 0f && wave.vehicles != null && wave.vehicles.Count > 0)
+            {
+                int planned = wave.vehicles.Count;
+                int coming = vehiclesOk ? Mathf.Min(planned, vehicles?.Count ?? 0) : 0;
+                if (coming < planned)
+                {
+                    float refund = wave.vehicleCost * (planned - coming) / planned;
+                    int max = Mathf.Max(plan.thisWave, Mathf.FloorToInt(Tiers.WaveCapFor(parms.faction.def) * 1.1f));
+                    int n = Mathf.Min(max, plan.thisWave + Mathf.FloorToInt(refund / Mathf.Max(1f, plan.avgPrice)));
+                    if (n > plan.thisWave)
+                    {
+                        HRLog.Msg($"vague {wave.index}/{wave.totalWaves} : {planned - coming} véhicule(s) prévu(s) absent(s), {refund:F0} pts rendus à l'infanterie ({plan.thisWave} → {n}).");
+                        plan.SetWaveCount(n);
+                    }
+                }
+            }
 
             // ---- transports (payants) pour l'infanterie qui ne monte pas dans les blindés ; on refait le plan avec le reste
             if (armored != null)
@@ -243,7 +282,21 @@ namespace HardenedRaids
                         plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven) ?? plan;
                     }
                     waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped, out waveVehicleCost);
-                    if (dropped > 0) HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague abandonné(s).");
+                    if (dropped > 0)
+                    {
+                        // le plan refait a moins de vagues que le premier : ce qui dépasse les plafonds par vague n'est pas
+                        // acheté et son coût revient à l'infanterie. Distribute écarte les blindés les moins chers puis les
+                        // derniers transports ; plus de points = autant de vagues ou plus, donc tout le reste rentre.
+                        int w1 = plan.waves;
+                        armored = armored.OrderByDescending(VehicleCompat.Cost).Take(HRSettings.MaxVehicles * w1).ToList();
+                        transports = transports.Take(HRSettings.MaxTransports * w1).ToList();
+                        float kept = armored.Sum(VehicleCompat.Cost) + transports.Sum(VehicleCompat.TransportCost);
+                        infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - kept);
+                        plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven) ?? plan;
+                        waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped2, out waveVehicleCost);
+                        HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague non achetés, coût rendu à l'infanterie ({infantryPoints:F0} pts)"
+                                  + (dropped2 > 0 ? $", {dropped2} abandonné(s)." : "."));
+                    }
                     vehicles = waveVehicles[0];
                     if (plan.waves > 1) plan.SetWaveCount(WaveCounts(plan, waveVehicleCost, raidPoints)[0]);
                 }
@@ -299,7 +352,7 @@ namespace HardenedRaids
                 // vagues suivantes : programmées par le postfix de TryGenerateRaidInfo si le raid aboutit (B12)
                 if (plan.waves > 1 && wave == null && !frame.DebugTest)
                 {
-                    WavePlan wp = WaveScheduler.FromRaidPlan(plan, waveVehicleCost != null ? WaveCounts(plan, waveVehicleCost, raidPoints) : null, waveVehicles);
+                    WavePlan wp = WaveScheduler.FromRaidPlan(plan, waveVehicleCost != null ? WaveCounts(plan, waveVehicleCost, raidPoints) : null, waveVehicles, waveVehicleCost);
                     wp.loadoutSeed = loadoutSeed;
                     wp.needBreacher = loadoutBreacher;
                     wp.gate = gate;
@@ -340,6 +393,13 @@ namespace HardenedRaids
             {
                 if (given >= plan.total) break;
                 if (counts[i] < max) { counts[i]++; given++; }
+            }
+            // reste des vagues bloquées au plafond : aux autres, tour à tour (w × max ≥ total, tout est placé)
+            for (bool moved = true; given < plan.total && moved;)
+            {
+                moved = false;
+                for (int i = 0; i < w && given < plan.total; i++)
+                    if (counts[i] < max) { counts[i]++; given++; moved = true; }
             }
             return counts;
         }
@@ -400,7 +460,11 @@ namespace HardenedRaids
             var rng = new System.Random(parms.seed ?? Rand.Int);
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out _);
             bool raid = parms.raidStrategy != null && parms.groupKind == PawnGroupKindDefOf.Combat;
-            RaidPlan plan = RaidPlan.Make(parms.faction.def, parms.points, tierX, null, needBreacher, rng, allowWaves: raid);
+            // même consommation du générateur que TryGenerate (raid d'origine) : graine des dotations tirée d'abord,
+            // dotations sur leur propre générateur, plafond d'armure sur les points du groupe
+            int loadoutSeed = rng.Next();
+            RaidPlan plan = RaidPlan.Make(parms.faction.def, parms.points, tierX, null, needBreacher, new System.Random(loadoutSeed), allowWaves: raid,
+                                          gate: ArmorGate.For(parms.points), gateGiven: true, capFactor: raid ? 1 : SingleWaveCapFactor(parms));
             if (plan == null) return null;
             List<Slot> slots = BuildSlots(parms, groupMaker, plan, raid ? plan.total : plan.thisWave, rng);
             if (slots.Count == 0) return null;
