@@ -16,9 +16,11 @@ namespace HardenedRaids
 {
     /// <summary>
     /// Lot « uncap » : combats hors raid encore plafonnés en amont du plafond de 10 000 (A1, décision D1 « garder le ratio »).
-    /// Chaque courbe points → points qui sature à ou avant 10 000 est prolongée au-delà de son dernier point en gardant
-    /// le ratio y/x de ce dernier point (droite passant par l'origine : à 50 000 pts de menace, un site « ⅛ » reçoit
-    /// 6 250 pts). Seulement quand UncapPoints est actif ; sinon les points d'origine sont remis (réversible à chaud).
+    /// Chaque courbe points → points qui sature à ou avant 10 000 garde sa valeur vanilla jusqu'à 10 000 (D7), puis est
+    /// prolongée par la droite passant par l'origine et l'ancre (max(dernier x, 10 000), dernier y) : continue, et le ratio
+    /// au plafond vanilla de la menace est conservé. Exemples : combat lointain (10 000 → 2 500, ¼) : 50 000 → 12 500 ;
+    /// points de site (5 000 → 1 000, plat jusqu'à 10 000) : 10 000 → 1 000, 50 000 → 5 000.
+    /// Seulement quand UncapPoints est actif ; sinon les points d'origine sont remis (réversible à chaud).
     /// </summary>
     public static class UncapCurves
     {
@@ -41,6 +43,9 @@ namespace HardenedRaids
             ("RimWorld.CompMechhiveAssembler", "MaxThreatPointsCurve"),                      // 10000 -> 1250
             ("RimWorld.GenStep_InsectLairCave", "CocoonThreatPointsCurve"),                  // 10000 -> 2500
             ("RimWorld.UndercaveMapComponent", "ThreatPointsCurve"),                         // 8000 -> 3000
+            // Volontairement absente : CompObelisk_Duplicator.CombatPointsSpawnPointsCurve (5000 -> 200) est le COÛT d'un
+            // double, retiré de 0,6 × menace (déjà déplafonnée) : figée, le nombre de doubles croît avec la menace (30 à 10k,
+            // 300 à 100k) ; prolongée, il resterait bloqué à 30.
         };
 
         /// <summary>Scripts de quête contenant des QuestNode_EvaluateSimpleCurve points → points à prolonger.</summary>
@@ -50,6 +55,7 @@ namespace HardenedRaids
         private static readonly Dictionary<QuestNode_EvaluateSimpleCurve, string> questOriginals = new Dictionary<QuestNode_EvaluateSimpleCurve, string>();
         private static bool collected;
         private const float FarX = 1e9f;
+        private const float VanillaCap = 10000f;   // plafond vanilla de la menace : valeur vanilla inchangée jusque-là
 
         /// <summary>Ajoute (ou retire) le point lointain de chaque courbe selon UncapPoints. Appelé au démarrage et au changement du réglage.</summary>
         public static void Apply()
@@ -70,14 +76,19 @@ namespace HardenedRaids
             }
         }
 
-        /// <summary>Prolongement « garder le ratio » : y/x du dernier point conservé au-delà.</summary>
+        /// <summary>
+        /// Prolongement « garder le ratio » ancré à x0 = max(dernier x, 10 000) : plat (valeur vanilla) jusqu'à x0, puis
+        /// y = dernier y / x0 × x. Ex. (5 000 → 1 000) : point (10 000, 1 000) ajouté, puis 1e9 → 1e8.
+        /// </summary>
         public static List<CurvePoint> ExtendByRatio(List<CurvePoint> orig)
         {
             var pts = new List<CurvePoint>(orig);
             if (pts.Count == 0) return pts;
             CurvePoint last = pts[pts.Count - 1];
             if (last.x <= 0f || last.y <= 0f || last.x >= FarX) return pts;
-            pts.Add(new CurvePoint(FarX, last.y / last.x * FarX));
+            float x0 = Mathf.Max(last.x, VanillaCap);
+            if (x0 > last.x) pts.Add(new CurvePoint(x0, last.y));
+            pts.Add(new CurvePoint(FarX, last.y / x0 * FarX));
             return pts;
         }
 
