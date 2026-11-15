@@ -45,7 +45,7 @@ namespace HardenedRaids
             ("RimWorld.UndercaveMapComponent", "ThreatPointsCurve"),                         // 8000 -> 3000
             // Volontairement absente : CompObelisk_Duplicator.CombatPointsSpawnPointsCurve (5000 -> 200) est le COÛT d'un
             // double, retiré de 0,6 × menace (déjà déplafonnée) : figée, le nombre de doubles croît avec la menace (30 à 10k,
-            // 300 à 100k) ; prolongée, il resterait bloqué à 30.
+            // 300 à 100k) ; prolongée, il resterait bloqué à 30. Nombre plafonné par Patch_DuplicatorObeliskCap (DU12).
         };
 
         /// <summary>Scripts de quête contenant des QuestNode_EvaluateSimpleCurve points → points à prolonger.</summary>
@@ -203,6 +203,44 @@ namespace HardenedRaids
             }
             if (!done) Log.Warning("[Hardened Raids] deep drill infestation cap not found: not uncapped.");
             return list;
+        }
+    }
+
+    /// <summary>
+    /// DU12 : obélisque duplicateur (Anomaly). Vanilla : 0,6 × menace de points, chaque double en coûte
+    /// CombatPointsSpawnPointsCurve(menace) (200 au-delà de 5000) → menace / 333 doubles (30 à 10k, 3000 à 1M).
+    /// À l'activation, les points restants sont bornés à « plafond par vague (industriel) » doubles, et la part apparue
+    /// hors de l'explosion est recalculée comme vanilla. Champs vanilla uniquement (pointsRemaining, outsideBlastCount).
+    /// </summary>
+    [HarmonyPatch(typeof(CompObelisk_Duplicator), nameof(CompObelisk_Duplicator.OnActivityActivated))]
+    public static class Patch_DuplicatorObeliskCap
+    {
+        private static readonly AccessTools.FieldRef<CompObelisk_ExplodingSpawner, float> PointsRemaining =
+            AccessTools.FieldRefAccess<CompObelisk_ExplodingSpawner, float>("pointsRemaining");
+        private static readonly AccessTools.FieldRef<CompObelisk_ExplodingSpawner, float> TotalCombatPoints =
+            AccessTools.FieldRefAccess<CompObelisk_ExplodingSpawner, float>("totalCombatPoints");
+        private static readonly AccessTools.FieldRef<CompObelisk_Duplicator, int> OutsideBlastCount =
+            AccessTools.FieldRefAccess<CompObelisk_Duplicator, int>("outsideBlastCount");
+        private static readonly FieldInfo CostCurve = AccessTools.Field(typeof(CompObelisk_Duplicator), "CombatPointsSpawnPointsCurve");
+
+        public static void Postfix(CompObelisk_Duplicator __instance)
+        {
+            try
+            {
+                if (CostCurve?.GetValue(null) is not SimpleCurve curve) return;
+                float cost = curve.Evaluate(TotalCombatPoints(__instance));
+                int cap = Mathf.Max(1, HRSettings.CapHighTech);
+                ref float points = ref PointsRemaining(__instance);
+                if (cost <= 0f || points <= cost * cap) return;
+                HRLog.Msg($"obélisque duplicateur : {points / cost:F0} doubles prévus, plafonnés à {cap}");
+                points = cost * cap;
+                // même formule que vanilla (points / 35 × 0,7)
+                OutsideBlastCount(__instance) = Mathf.CeilToInt(Mathf.CeilToInt(points / 35f) * 0.7f);
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] duplicator obelisk cap: " + e.Message);
+            }
         }
     }
 }
