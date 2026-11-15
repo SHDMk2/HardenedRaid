@@ -296,10 +296,27 @@ namespace HardenedRaids
         }
 
         // ------------------------------------------------------------ marqueur invisible (IA)
+        /// <summary>
+        /// Pose ou met à jour le marqueur de palier. Un pawn du monde rhabillé (réutilisé par vanilla) peut déjà en porter
+        /// un : on garde le premier (palier mis à jour, retiré au palier 0) et on supprime les doublons.
+        /// </summary>
         public static void Mark(Pawn pawn, int tierIndex)
         {
-            if (HRDefOf.HR_RaiderTier == null || tierIndex <= 0) return;
-            Hediff h = HediffMaker.MakeHediff(HRDefOf.HR_RaiderTier, pawn);
+            HediffDef def = HRDefOf.HR_RaiderTier;
+            if (def == null || pawn.health?.hediffSet == null) return;
+            List<Hediff> old = pawn.health.hediffSet.hediffs.Where(x => x.def == def).ToList();
+            for (int i = 1; i < old.Count; i++) pawn.health.RemoveHediff(old[i]);
+            if (tierIndex <= 0)
+            {
+                if (old.Count > 0) pawn.health.RemoveHediff(old[0]);
+                return;
+            }
+            if (old.Count > 0)
+            {
+                old[0].Severity = tierIndex;
+                return;
+            }
+            Hediff h = HediffMaker.MakeHediff(def, pawn);
             h.Severity = tierIndex;
             pawn.health.AddHediff(h);
         }
