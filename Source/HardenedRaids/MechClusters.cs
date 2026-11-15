@@ -31,8 +31,13 @@ namespace HardenedRaids
     {
         public const int MaxSide = 60;              // côté max d'une grappe, après le facteur aléatoire
         public const int StaggerTicks = 120;        // écart entre deux grappes différées d'un même groupe
-        // fenêtre de réessai d'une grappe différée dont le tir échoue (pas d'emplacement…) : la file vanilla la retente
-        // toutes les ~833 ticks (QueuedIncident.RetryIntervalTicks) pendant 1 jour, puis l'abandonne
+        // fenêtre de réessai d'une grappe différée dont le tir échoue : la file vanilla la retente toutes les ~833 ticks
+        // (QueuedIncident.RetryIntervalTicks) pendant 1 jour, puis l'abandonne. Coût d'un réessai : parms forcés, donc
+        // CanFireNow ne teste que le Réveil du Vide (Anomaly) et CanFireNowSub (Royalty, faction mécanoïde) -> quelques
+        // tests de booléens. Croquis + recherche d'emplacement seulement si CanFireNow passe ; hors grappe Strict
+        // l'emplacement est toujours trouvé (repli CellFinder.RandomCell), donc le tir réussit. Seule une exécution ratée
+        // (exception d'un autre mod…) referait croquis + 100 essais de siège à chaque réessai (~72 / jour × 7 grappes) :
+        // R9, marquée dans Patch_MechClusterIncident.Failed, elle n'est plus réexécutée (réessais restants = CanFireNow seul).
         public const int RetryTicks = GenDate.TicksPerDay;
 
         public static float Budget => Mathf.Max(10000f, HRSettings.MechClusterBudget);
@@ -41,7 +46,7 @@ namespace HardenedRaids
         /// <summary>Plafond d'une grappe unique (tous les appelants de GenerateClusterSketch).</summary>
         public static float SingleCap => HRSettings.UncapPoints ? Budget : MechClusterGenerator.MaxPoints;
 
-        // D9 : grappes par incident (simultanées + différées) ; au-delà, le surplus est perdu (5M pts = 250 grappes sinon).
+        // DU9 : grappes par incident (simultanées + différées) ; au-delà, le surplus est perdu (5M pts = 250 grappes sinon).
         // Réglage MaxSimultaneousClusters ≤ 6 : avec 3 par défaut, 3 maintenant + 7 différées.
         public const int MaxTotal = 10;
 
@@ -94,9 +99,19 @@ namespace HardenedRaids
             AccessTools.MethodDelegate<Func<IncidentWorker_MechCluster, IncidentParms, bool>>(
                 AccessTools.Method(typeof(IncidentWorker_MechCluster), "TryExecuteWorker"), null, false, null);
 
+        /// <summary>
+        /// R9 : parms dont l'exécution a échoué (croquis fait, puis pas d'emplacement ou exception). Une grappe différée de
+        /// la file garde ses parms entre les réessais : elle n'est plus réexécutée et sera abandonnée en fin de fenêtre.
+        /// Table faible, rien de sauvegardé (après un chargement, au plus un essai complet de plus).
+        /// </summary>
+        private static readonly ConditionalWeakTable<IncidentParms, object> Failed = new ConditionalWeakTable<IncidentParms, object>();
+        private static readonly object Mark = new object();
+
         public static bool Prefix(IncidentWorker_MechCluster __instance, IncidentParms parms, ref bool __result)
         {
-            if (ClusterSplit.Reentrant || parms?.target is not Map map) return true;
+            if (ClusterSplit.Reentrant || parms == null) return true;
+            if (Failed.TryGetValue(parms, out _)) { __result = false; return false; }
+            if (parms.target is not Map map) return true;
             int needed = ClusterSplit.CountFor(parms.points);
             if (needed <= 1) return true;
             float total = parms.points, per = total / needed;   // chaque grappe ≤ budget, même plafonnées
@@ -128,6 +143,17 @@ namespace HardenedRaids
             ClusterSplit.Announce(n, spawned, n - spawned, per);
             __result = true;
             return false;
+        }
+
+        public static void Postfix(IncidentParms parms, bool __result)
+        {
+            if (!__result && !ClusterSplit.Reentrant && parms != null) Failed.AddOrUpdate(parms, Mark);
+        }
+
+        public static Exception Finalizer(IncidentParms parms, Exception __exception)
+        {
+            if (__exception != null && !ClusterSplit.Reentrant && parms != null) Failed.AddOrUpdate(parms, Mark);
+            return __exception;
         }
     }
 
