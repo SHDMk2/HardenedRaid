@@ -262,7 +262,21 @@ namespace HardenedRaids
                         plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven) ?? plan;
                     }
                     waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped, out waveVehicleCost);
-                    if (dropped > 0) HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague abandonné(s).");
+                    if (dropped > 0)
+                    {
+                        // le plan refait a moins de vagues que le premier : ce qui dépasse les plafonds par vague n'est pas
+                        // acheté et son coût revient à l'infanterie. Distribute écarte les blindés les moins chers puis les
+                        // derniers transports ; plus de points = autant de vagues ou plus, donc tout le reste rentre.
+                        int w1 = plan.waves;
+                        armored = armored.OrderByDescending(VehicleCompat.Cost).Take(HRSettings.MaxVehicles * w1).ToList();
+                        transports = transports.Take(HRSettings.MaxTransports * w1).ToList();
+                        float kept = armored.Sum(VehicleCompat.Cost) + transports.Sum(VehicleCompat.TransportCost);
+                        infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - kept);
+                        plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven) ?? plan;
+                        waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped2, out waveVehicleCost);
+                        HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague non achetés, coût rendu à l'infanterie ({infantryPoints:F0} pts)"
+                                  + (dropped2 > 0 ? $", {dropped2} abandonné(s)." : "."));
+                    }
                     vehicles = waveVehicles[0];
                     if (plan.waves > 1) plan.SetWaveCount(WaveCounts(plan, waveVehicleCost, raidPoints)[0]);
                 }
