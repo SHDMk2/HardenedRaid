@@ -103,8 +103,11 @@ namespace HardenedRaids
             if (f == null || (rpFaction != null && rpFaction != f)) return null;
             float vanilla = VanillaPoints.RandomInRange;
             float points = vanilla;
-            if (HRSettings.UncapPoints && HRSettings.SettlementThreatShare > 0f)
-                points = Mathf.Max(vanilla, PlayerThreatNow() * HRSettings.SettlementThreatShare);
+            // D8 : indépendant de UncapPoints. Réglage décoché : la menace reste plafonnée à 10 000 comme vanilla
+            // (StorytellerUtility.DefaultThreatPointsNow, MaxPoints), soit au plus 2 500 pts de défenseurs à 25 % ;
+            // tourelles et véhicules ne dépendent que de leurs propres réglages.
+            if (HRSettings.SettlementThreatShare > 0f)
+                points = Mathf.Max(vanilla, Mathf.Min(PlayerThreatNow(), PointsPatches.MaxPoints()) * HRSettings.SettlementThreatShare);
             var ctx = new Context { game = Verse.Current.Game, map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points) };
             ctx.expectedDefenders = EstimateDefenders(f, points);
             // servants : au plus 1 défenseur sur 10 (les autres restent mobiles)
