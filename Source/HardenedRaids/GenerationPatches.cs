@@ -94,6 +94,13 @@ namespace HardenedRaids
                 else if (!HRSettings.EnableTiers)
                     __state = VanillaWaveCap.Arm(parms, frame, Tiers.WaveCapFor(parms.faction.def));
             }
+            // humains hors raid sans paliers (sites, quêtes, embuscades, défenseurs de colonie, y compris neutre / alliée
+            // attaquée : DU1) : une vague au plafond (×SettlementCapFactor pour une colonie, DU2), le surplus est perdu
+            else if (!main)
+            {
+                int cap = VanillaWaveCap.OutOfRaidCap(parms);
+                if (cap > 0) __state = VanillaWaveCap.Arm(parms, null, cap);
+            }
             return true;
         }
 

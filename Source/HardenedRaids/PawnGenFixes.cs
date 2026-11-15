@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using HarmonyLib;
 using RimWorld;
 using RimWorld.Planet;
@@ -129,6 +130,21 @@ namespace HardenedRaids
                 Log.Warning("[Hardened Raids] pawn kinds example: " + e.Message);
                 return true;
             }
+        }
+
+        /// <summary>
+        /// Paliers coupés : l'aperçu vanilla d'un groupe hors raid (lits d'une colonie, « N ennemis » d'un site) suit le
+        /// même plafond que sa génération (VanillaWaveCap.OutOfRaidCap). Un aperçu de raid garde toutes ses vagues (DU3).
+        /// </summary>
+        public static void Postfix(PawnGroupMakerParms parms, ref IEnumerable<PawnKindDef> __result)
+        {
+            if (parms == null || __result == null || (parms.raidStrategy != null && parms.groupKind == PawnGroupKindDefOf.Combat)) return;
+            try
+            {
+                int cap = VanillaWaveCap.OutOfRaidCap(parms);
+                if (cap > 0) __result = __result.Take(cap);
+            }
+            catch (Exception e) { Log.Warning("[Hardened Raids] pawn kinds example cap: " + e.Message); }
         }
     }
 }

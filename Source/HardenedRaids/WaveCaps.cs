@@ -35,6 +35,22 @@ namespace HardenedRaids
             armedFrame = null;
         }
 
+        /// <summary>
+        /// Plafond d'un groupe humain hors raid généré par vanilla (EnableTiers décoché ; avec les paliers, la génération
+        /// Hardened et son repli plafonnent déjà) : groupe hostile (site, quête, embuscade…) au plafond par vague, défenseurs
+        /// d'une colonie en génération, hostile ou neutre / alliée attaquée (DU1), à ce plafond × SettlementCapFactor (DU2).
+        /// Une seule vague, surplus perdu. 0 = pas de plafond.
+        /// </summary>
+        internal static int OutOfRaidCap(PawnGroupMakerParms parms)
+        {
+            if (HRSettings.EnableTiers) return 0;
+            Faction f = parms?.faction;
+            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction) return 0;
+            if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return 0;
+            if (!f.HostileTo(Faction.OfPlayer) && !SettlementDefense.IsDefenderGroup(parms)) return 0;
+            return Tiers.WaveCapFor(f.def) * RaidGenerator.SingleWaveCapFactor(parms);
+        }
+
         /// <summary>Plafond des non-humains : le réglage low-tech (décision D5).</summary>
         public static int NonHumanCap => HRSettings.CapLowTech;
 

@@ -97,10 +97,19 @@ namespace HardenedRaids
         /// </summary>
         public static bool TreatAsHostile(PawnGroupMakerParms parms)
         {
-            Context c = Current;
-            Faction f = parms?.faction;
-            if (c == null || f == null || c.faction != f || f.HostileTo(Faction.OfPlayer)) return false;   // hostile : chemin normal
+            if (parms?.faction == null || parms.faction.HostileTo(Faction.OfPlayer)) return false;   // hostile : chemin normal
             if (!HRSettings.EnableTiers || GenContext.NonCombat > 0) return false;
+            return IsDefenderGroup(parms);
+        }
+
+        /// <summary>
+        /// Groupe de combat / de colonie de la faction dont la colonie est en génération (hostile ou non), paliers actifs
+        /// ou non : sert aussi au plafond vanilla quand EnableTiers est décoché (DU1, VanillaWaveCap.OutOfRaidCap).
+        /// </summary>
+        public static bool IsDefenderGroup(PawnGroupMakerParms parms)
+        {
+            Context c = Current;
+            if (c == null || parms?.faction == null || c.faction != parms.faction) return false;
             return parms.groupKind == PawnGroupKindDefOf.Combat || parms.groupKind == PawnGroupKindDefOf.Settlement;
         }
 
@@ -142,6 +151,11 @@ namespace HardenedRaids
             return ctx;
         }
 
+        /// <summary>
+        /// Effectif prévu (servants, véhicules) : plan Hardened, sinon (paliers coupés, palier &lt; 1) l'estimation vanilla
+        /// points / 120, bornée comme la génération : plafond par vague × <see cref="RaidPlan.SettlementCapFactor"/> (DU2),
+        /// le même dans le plan Hardened, son repli vanilla et la génération vanilla sans paliers (VanillaWaveCap).
+        /// </summary>
         private static int EstimateDefenders(Faction f, float points)
         {
             try
@@ -154,7 +168,8 @@ namespace HardenedRaids
                 }
             }
             catch (Exception e) { HRLog.Msg("estimation des défenseurs : " + e.Message); }
-            return Mathf.Max(1, Mathf.RoundToInt(points / 120f));
+            int cap = Mathf.Max(1, Tiers.WaveCapFor(f.def) * RaidPlan.SettlementCapFactor);
+            return Mathf.Clamp(Mathf.RoundToInt(points / 120f), 1, cap);
         }
 
         /// <summary>Points à imposer quand le générateur n'a pas reçu de points explicites (null = ne rien changer).</summary>
