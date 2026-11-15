@@ -32,6 +32,7 @@ namespace HardenedRaids
         public int ncos, officers; // grades de cette vague
         public ArmorGate gate;
         public float frac;     // part du noyau (palier haut)
+        public float avgPrice; // prix moyen prévu d'un raider (noyau et troupe au prorata)
 
         /// <summary>Colonie de faction (D2) : une seule vague, jusqu'à ce multiple du plafond par vague ; le surplus est perdu.</summary>
         public const int SettlementCapFactor = 2;
@@ -58,7 +59,7 @@ namespace HardenedRaids
             float hiPrice = lo == hi ? loPrice : Pricing.ExpectedPrice(f, ladder[hi], hi, hiLoadout);
             float avg = Mathf.Max(1f, (1f - frac) * loPrice + frac * hiPrice);
 
-            var p = new RaidPlan { faction = f, points = points, tierX = x, gate = gate, frac = frac };
+            var p = new RaidPlan { faction = f, points = points, tierX = x, gate = gate, frac = frac, avgPrice = avg };
             if (countOverride.HasValue)
             {
                 p.total = p.thisWave = Mathf.Max(1, countOverride.Value);
@@ -243,6 +244,25 @@ namespace HardenedRaids
                                           inRaid ? 1 : SingleWaveCapFactor(parms));
             if (plan == null) return false;
 
+            // ---- vague 2+ arrivée sans ses véhicules (autre mode d'arrivée, véhicules / VF coupés, defs retirées) : leur
+            //      coût, déduit de son infanterie à la planification, lui revient (au plus le plafond par vague, +10 %)
+            if (wave != null && wave.vehicleCost > 0f && wave.vehicles != null && wave.vehicles.Count > 0)
+            {
+                int planned = wave.vehicles.Count;
+                int coming = vehiclesOk ? Mathf.Min(planned, vehicles?.Count ?? 0) : 0;
+                if (coming < planned)
+                {
+                    float refund = wave.vehicleCost * (planned - coming) / planned;
+                    int max = Mathf.Max(plan.thisWave, Mathf.FloorToInt(Tiers.WaveCapFor(parms.faction.def) * 1.1f));
+                    int n = Mathf.Min(max, plan.thisWave + Mathf.FloorToInt(refund / Mathf.Max(1f, plan.avgPrice)));
+                    if (n > plan.thisWave)
+                    {
+                        HRLog.Msg($"vague {wave.index}/{wave.totalWaves} : {planned - coming} véhicule(s) prévu(s) absent(s), {refund:F0} pts rendus à l'infanterie ({plan.thisWave} → {n}).");
+                        plan.SetWaveCount(n);
+                    }
+                }
+            }
+
             // ---- transports (payants) pour l'infanterie qui ne monte pas dans les blindés ; on refait le plan avec le reste
             if (armored != null)
             {
@@ -332,7 +352,7 @@ namespace HardenedRaids
                 // vagues suivantes : programmées par le postfix de TryGenerateRaidInfo si le raid aboutit (B12)
                 if (plan.waves > 1 && wave == null && !frame.DebugTest)
                 {
-                    WavePlan wp = WaveScheduler.FromRaidPlan(plan, waveVehicleCost != null ? WaveCounts(plan, waveVehicleCost, raidPoints) : null, waveVehicles);
+                    WavePlan wp = WaveScheduler.FromRaidPlan(plan, waveVehicleCost != null ? WaveCounts(plan, waveVehicleCost, raidPoints) : null, waveVehicles, waveVehicleCost);
                     wp.loadoutSeed = loadoutSeed;
                     wp.needBreacher = loadoutBreacher;
                     wp.gate = gate;

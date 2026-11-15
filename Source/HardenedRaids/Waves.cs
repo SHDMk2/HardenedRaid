@@ -43,6 +43,8 @@ namespace HardenedRaids
         /// <summary>Incident à relancer (null = raid ennemi ; infestation : voir InfestationWaves).</summary>
         public IncidentDef incident;
         public int postponed;
+        /// <summary>Coût (points) des véhicules prévus, déduit de l'infanterie de la vague (0 = inconnu, save v1.0 : rien à rendre).</summary>
+        public float vehicleCost;
 
         /// <summary>Annulée par un signal pendant le traitement des vagues (non sauvegardé).</summary>
         public bool cancelled;
@@ -111,6 +113,7 @@ namespace HardenedRaids
             Scribe_Values.Look(ref gateTech, "gateTech", 0);
             Scribe_Defs.Look(ref incident, "incident");
             Scribe_Values.Look(ref postponed, "postponed", 0);
+            Scribe_Values.Look(ref vehicleCost, "vehicleCost", 0f);
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
                 vehicles?.RemoveAll(v => v.NullOrEmpty());
         }
@@ -122,6 +125,7 @@ namespace HardenedRaids
         public int count;
         public float share;   // fraction des points du raid emportée par cette vague
         public List<ThingDef> vehicles;   // part des véhicules du raid (null = aucun)
+        public float vehicleCost;         // leur coût, déduit de l'infanterie de la vague
     }
 
     /// <summary>Vagues suivantes prévues pendant la génération, programmées seulement si le raid réussit.</summary>
@@ -147,7 +151,7 @@ namespace HardenedRaids
         /// Plan des vagues 2+ d'un raid Hardened : effectifs égaux (ou <paramref name="counts"/> quand les véhicules
         /// sont répartis), points au prorata, part des véhicules du raid.
         /// </summary>
-        public static WavePlan FromRaidPlan(RaidPlan plan, int[] counts = null, List<List<ThingDef>> vehicles = null)
+        public static WavePlan FromRaidPlan(RaidPlan plan, int[] counts = null, List<List<ThingDef>> vehicles = null, float[] vehicleCosts = null)
         {
             var wp = new WavePlan { total = plan.total, waves = plan.waves, tierX = plan.tierX };
             int remaining = plan.total - (counts != null ? counts[0] : plan.thisWave);
@@ -156,10 +160,11 @@ namespace HardenedRaids
                 int n = counts != null && counts.Length >= i ? Mathf.Min(counts[i - 1], remaining) : Mathf.Min(plan.thisWave, remaining);
                 if (n <= 0) continue;
                 remaining -= n;
+                List<ThingDef> vs = vehicles != null && vehicles.Count >= i && vehicles[i - 1].Count > 0 ? vehicles[i - 1] : null;
                 wp.next.Add(new WavePlanItem
                 {
-                    count = n,
-                    vehicles = vehicles != null && vehicles.Count >= i && vehicles[i - 1].Count > 0 ? vehicles[i - 1] : null,
+                    count = n, vehicles = vs,
+                    vehicleCost = vs != null && vehicleCosts != null && vehicleCosts.Length >= i ? vehicleCosts[i - 1] : 0f,
                 });
             }
             // sécurité : un reste non placé par les effectifs prévus va aux vagues suivantes, tour à tour
@@ -239,7 +244,7 @@ namespace HardenedRaids
                     fireTick = tick, map = map, faction = faction, strategy = strategy, arrival = arrival,
                     points = basePoints * it.share, adjustedPoints = adjusted * it.share,
                     tierX = wp.tierX, count = it.count, index = index++, totalWaves = wp.waves,
-                    vehicles = it.vehicles?.Select(v => v.defName).ToList(),
+                    vehicles = it.vehicles?.Select(v => v.defName).ToList(), vehicleCost = it.vehicles != null ? it.vehicleCost : 0f,
                     raidParms = template, questId = questId, incident = wp.incident,
                     sameLoadout = !wp.vanilla && wp.incident == null, loadoutSeed = wp.loadoutSeed, needBreacher = wp.needBreacher,
                     gatePoints = adjusted,
