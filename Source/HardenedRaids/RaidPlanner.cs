@@ -304,8 +304,24 @@ namespace HardenedRaids
                         infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - kept);
                         plan = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven) ?? plan;
                         waveVehicles = VehicleCompat.Distribute(armored, transports, plan.waves, out int dropped2, out waveVehicleCost);
+                        bool refunded2 = false;
+                        if (dropped2 > 0)
+                        {
+                            // R6 : en principe impossible (plus de points → autant de vagues ou plus) ; sinon le coût des
+                            // véhicules encore écartés revient aussi à l'infanterie. Ceux placés gardent leur vague ; les
+                            // vagues ajoutées par le plan refait partent sans véhicule.
+                            infantryPoints = Mathf.Max(raidPoints * 0.5f, raidPoints - waveVehicleCost.Sum());
+                            RaidPlan plan2 = RaidPlan.Make(parms.faction.def, infantryPoints, tierX, null, loadoutBreacher, LoadoutRng(), true, gate, gateGiven);
+                            if (plan2 != null && plan2.waves >= waveVehicles.Count)
+                            {
+                                plan = plan2;
+                                while (waveVehicles.Count < plan.waves) waveVehicles.Add(new List<ThingDef>());
+                                if (waveVehicleCost.Length < plan.waves) Array.Resize(ref waveVehicleCost, plan.waves);
+                                refunded2 = true;
+                            }
+                        }
                         HRLog.Msg($"véhicules : {dropped} véhicule(s) au-delà des plafonds par vague non achetés, coût rendu à l'infanterie ({infantryPoints:F0} pts)"
-                                  + (dropped2 > 0 ? $", {dropped2} abandonné(s)." : "."));
+                                  + (dropped2 > 0 ? $", {dropped2} de plus écarté(s){(refunded2 ? ", coût rendu aussi" : ", coût perdu")}." : "."));
                     }
                     vehicles = waveVehicles[0];
                     if (plan.waves > 1) plan.SetWaveCount(WaveCounts(plan, waveVehicleCost, raidPoints)[0]);

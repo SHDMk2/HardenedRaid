@@ -158,9 +158,17 @@ namespace HardenedRaids
             for (int i = 2; i <= plan.waves && remaining > 0; i++)
             {
                 int n = counts != null && counts.Length >= i ? Mathf.Min(counts[i - 1], remaining) : Mathf.Min(plan.thisWave, remaining);
-                if (n <= 0) continue;
-                remaining -= n;
                 List<ThingDef> vs = vehicles != null && vehicles.Count >= i && vehicles[i - 1].Count > 0 ? vehicles[i - 1] : null;
+                if (n <= 0)
+                {
+                    if (vs == null) continue;
+                    // R6 : vague sans infanterie mais avec ses véhicules (déjà payés) : elle part quand même, avec un raider
+                    // pris à la plus grosse vague déjà prévue (un de plus s'il n'y en a pas)
+                    WavePlanItem big = wp.next.Where(x => x.count > 1).OrderByDescending(x => x.count).FirstOrDefault();
+                    if (big != null) big.count--;
+                    n = 1;
+                }
+                else remaining -= n;
                 wp.next.Add(new WavePlanItem
                 {
                     count = n, vehicles = vs,
