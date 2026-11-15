@@ -400,7 +400,11 @@ namespace HardenedRaids
             var rng = new System.Random(parms.seed ?? Rand.Int);
             bool needBreacher = StrategyNeedsBreachers(parms.raidStrategy, out _);
             bool raid = parms.raidStrategy != null && parms.groupKind == PawnGroupKindDefOf.Combat;
-            RaidPlan plan = RaidPlan.Make(parms.faction.def, parms.points, tierX, null, needBreacher, rng, allowWaves: raid);
+            // même consommation du générateur que TryGenerate (raid d'origine) : graine des dotations tirée d'abord,
+            // dotations sur leur propre générateur, plafond d'armure sur les points du groupe
+            int loadoutSeed = rng.Next();
+            RaidPlan plan = RaidPlan.Make(parms.faction.def, parms.points, tierX, null, needBreacher, new System.Random(loadoutSeed), allowWaves: raid,
+                                          gate: ArmorGate.For(parms.points), gateGiven: true);
             if (plan == null) return null;
             List<Slot> slots = BuildSlots(parms, groupMaker, plan, raid ? plan.total : plan.thisWave, rng);
             if (slots.Count == 0) return null;
