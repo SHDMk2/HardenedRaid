@@ -16,7 +16,8 @@ namespace HardenedRaids
     ///    pawns à bord des véhicules gardés dans leur lord (VF les retire du lord quand le véhicule sort) ;
     ///  - jobs HR_BoardVehicle et duties HR_* retirés ;
     ///  - vagues en attente, registre des tourelles ravitaillées, convoi en attente vidés ;
-    ///  - marqueur HR_RaiderTier retiré de tous les pawns (cartes, monde, caravanes, prisonniers, recrutés, morts).
+    ///  - marqueur HR_RaiderTier retiré de tous les pawns (cartes, monde, caravanes, prisonniers, recrutés, morts, y compris
+    ///    les cadavres et pawns rangés dans un conteneur : tombe, sarcophage, caisse, navette, porteur, véhicule, inventaire).
     /// </summary>
     public static class Uninstall
     {
@@ -98,18 +99,33 @@ namespace HardenedRaids
         /// Remplace le lord : mêmes pawns (y compris ceux à bord d'un véhicule, non apparus), nouveau LordJob vanilla.
         /// Lord créé vide puis rempli : Patch_VehicleLord ne le transforme pas en convoi.
         /// </summary>
-        private static void Replace(Lord old, Map map, Func<LordJob> makeJob, Func<Pawn, bool> toExit = null)
+        private static void Replace(Lord old, Map map, Func<LordJob> makeJob, Func<Pawn, bool> toExit = null) =>
+            Replace(old, map, makeJob, toExit, null, out _, out _);
+
+        /// <param name="skip">pawns laissés sans lord</param>
+        /// <param name="main">lord makeJob créé (null si personne)</param>
+        /// <param name="exitLord">lord de sortie des pawns toExit (null si personne)</param>
+        private static void Replace(Lord old, Map map, Func<LordJob> makeJob, Func<Pawn, bool> toExit, Func<Pawn, bool> skip, out Lord main, out Lord exitLord)
         {
+            main = exitLord = null;
             Faction f = old.faction;
             List<Pawn> pawns = old.ownedPawns.ToList();
             map.lordManager.RemoveLord(old);   // Cleanup : lord et duty des pawns remis à zéro, jobs du lord arrêtés
             nLords++;
-            pawns.RemoveAll(p => p == null || p.Destroyed || p.Dead || p.GetLord() != null);
+            pawns.RemoveAll(p => p == null || p.Destroyed || p.Dead || p.GetLord() != null || (skip != null && skip(p)));
             if (f == null || pawns.Count == 0) return;
             List<Pawn> exit = toExit != null ? pawns.Where(toExit).ToList() : new List<Pawn>();
             List<Pawn> rest = pawns.Where(p => !exit.Contains(p)).ToList();
-            if (rest.Count > 0) LordMaker.MakeNewLord(f, makeJob(), map).AddPawns(rest);
-            if (exit.Count > 0) LordMaker.MakeNewLord(f, ExitJob(), map).AddPawns(exit);
+            if (rest.Count > 0)
+            {
+                main = LordMaker.MakeNewLord(f, makeJob(), map);
+                main.AddPawns(rest);
+            }
+            if (exit.Count > 0)
+            {
+                exitLord = LordMaker.MakeNewLord(f, ExitJob(), map);
+                exitLord.AddPawns(exit);
+            }
         }
 
         private static void ConvertConvoys(Map map)
@@ -127,17 +143,48 @@ namespace HardenedRaids
                 if (!leave)
                 {
                     // ceux qui n'ont pas encore débarqué descendent maintenant, dans le lord d'infanterie (vanilla) ;
-                    // pas de nouvelle tourelle de camion. Pilote et tireurs restent à bord (équipage VF).
+                    // pas de nouvelle tourelle de camion. Pilote et tireurs restent à bord (équipage VF), le pilote
+                    // d'un camion aussi : le camion repart seul.
                     job.deployTurrets = false;
                     foreach (Pawn v in l.ownedPawns.ToList())
-                        if (v.Spawned && !job.unloaded.Contains(v)) job.Unload(v, map);
+                        if (v.Spawned && !job.unloaded.Contains(v)) job.Unload(v, map, keepDriver: true);
                 }
                 else foreach (Pawn v in l.ownedPawns) if (v.Spawned) UndeployVF(v);
                 Faction f = l.faction;
-                // raid en cours : les blindés continuent l'assaut (lord VF), les camions vides repartent
-                if (leave) Replace(l, map, ExitJob);
-                else Replace(l, map, () => ArmoredJobVF(f), v => !HasTurretsVF(v));
+                // Véhicule qui ne peut ni partir ni se battre (camion garé dont le pilote est descendu, véhicule immobilisé) :
+                // VF ne fait pas sortir un véhicule sans équipage (JobGiver_ExitMap ne donne aucun job, il resterait pour
+                // toujours dans son lord) -> laissé sur place sans lord, comme un véhicule abandonné du convoi (VF le rend
+                // revendicable une fois la faction partie) ; ses occupants descendent et rejoignent l'infanterie ou la sortie.
+                var stranded = new HashSet<Pawn>(l.ownedPawns.Where(v => StrandedVF(v, fight: !leave)));
+                Lord main, exit;
+                // raid en cours : les blindés continuent l'assaut (lord VF), les camions repartent
+                if (leave) Replace(l, map, ExitJob, null, stranded.Contains, out main, out exit);
+                else Replace(l, map, () => ArmoredJobVF(f), v => !HasTurretsVF(v), stranded.Contains, out main, out exit);
+                if (leave) exit = main;
+                foreach (Lord nl in new[] { main, exit }.Where(x => x != null).Distinct())
+                    foreach (Pawn v in nl.ownedPawns) ReadyVF(v);   // moteur démarré : VF refuse de bouger sinon
+                if (f == null) continue;
+                Lord foot = null;
+                foreach (Pawn v in stranded)
+                {
+                    List<Pawn> down = EmptyOutVF(v);
+                    foreach (Pawn p in down)
+                    {
+                        if (p.GetLord() != null) continue;   // passager : il garde son lord (infanterie, rembarquement)
+                        foot ??= leave ? exit ?? LordMaker.MakeNewLord(f, ExitJob(), map) : InfantryLordOf(job, map, f);
+                        foot.AddPawn(p);
+                    }
+                    HRLog.Msg($"désactivation : {v.LabelShort} ne peut ni partir ni se battre, laissé sur place ({down.Count} occupant(s) descendu(s)).");
+                }
             }
+        }
+
+        /// <summary>Lord d'infanterie du raid s'il attaque encore, sinon un assaut vanilla neuf.</summary>
+        private static Lord InfantryLordOf(LordJob_HRConvoy job, Map map, Faction f)
+        {
+            Lord inf = job.infantryLord;
+            if (inf != null && map.lordManager.lords.Contains(inf) && inf.ownedPawns.Count > 0 && !Exiting(inf)) return inf;
+            return LordMaker.MakeNewLord(f, AssaultJob(f), map);
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -148,6 +195,35 @@ namespace HardenedRaids
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static LordJob ArmoredJobVF(Faction f) => VehicleCompat.ArmoredLordJob(f);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void ReadyVF(Pawn v) => VehicleCompat.Ready(v);
+
+        /// <summary>
+        /// Ni départ ni combat possible : sans pilote (après avoir mis un passager au volant) ou immobilisé. Pendant le raid,
+        /// un blindé immobilisé qui a encore ses tireurs se bat sur place ; une pièce en batterie (ou qui se replie) n'est pas bloquée.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool StrandedVF(Pawn v, bool fight)
+        {
+            if (!v.Spawned || VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v)) return false;
+            VehicleCompat.PromoteDriver(v);
+            if (VehicleCompat.CanMove(v)) return false;
+            return !(fight && VehicleCompat.HasTurrets(v) && VehicleCompat.PawnsAboard(v).Any());
+        }
+
+        /// <summary>Fait descendre tout l'équipage ; retourne ceux qui sont apparus sur la carte.</summary>
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static List<Pawn> EmptyOutVF(Pawn v)
+        {
+            var down = new List<Pawn>();
+            foreach (Pawn p in VehicleCompat.PawnsAboard(v).ToList())
+            {
+                VehicleCompat.Disembark(v, p);
+                if (p.Spawned) down.Add(p);
+            }
+            return down;
+        }
 
         private static void ConvertCrews(Map map)
         {
@@ -166,13 +242,38 @@ namespace HardenedRaids
         }
 
         // ------------------------------------------------------------ pawns
-        private static IEnumerable<Pawn> AllPawns()
+        /// <summary>
+        /// Tous les pawns, vivants ou morts : ceux que connaît le jeu (cartes, monde, caravanes, transports en vol), les
+        /// cadavres posés, et tout ce qui est rangé dans un conteneur (tombes, sarcophages, caisses, navettes, porteurs,
+        /// véhicules, inventaires, caravanes...), parcouru récursivement sur chaque carte et sur le monde. Un clic : pas de coût en jeu.
+        /// </summary>
+        private static List<Pawn> AllPawns()
         {
             var seen = new HashSet<Pawn>();
-            foreach (Pawn p in PawnsFinder.All_AliveOrDead.ToList()) if (p != null && seen.Add(p)) yield return p;
+            var all = new List<Pawn>();
+            void Add(Pawn p) { if (p != null && seen.Add(p)) all.Add(p); }
+            void AddFrom(List<Thing> things)
+            {
+                foreach (Thing t in things)
+                {
+                    if (t is Pawn p) Add(p);
+                    else if (t is Corpse c) Add(c.InnerPawn);
+                }
+            }
+            foreach (Pawn p in PawnsFinder.All_AliveOrDead.ToList()) Add(p);
+            var held = new List<Thing>();
             foreach (Map map in Find.Maps.ToList())
-                foreach (Thing t in map.listerThings.ThingsInGroup(ThingRequestGroup.Corpse).ToList())
-                    if (t is Corpse c && c.InnerPawn != null && seen.Add(c.InnerPawn)) yield return c.InnerPawn;
+            {
+                AddFrom(map.listerThings.ThingsInGroup(ThingRequestGroup.Corpse).ToList());
+                ThingOwnerUtility.GetAllThingsRecursively(map, held);
+                AddFrom(held);
+            }
+            if (Find.World != null)
+            {
+                ThingOwnerUtility.GetAllThingsRecursively(Find.World, held);
+                AddFrom(held);
+            }
+            return all;
         }
 
         private static void ClearJobsAndDuties()

@@ -397,6 +397,10 @@ namespace HardenedRaids
 
         public static bool NeedsCrew(Pawn v) => DriverSeats(v) > 0;
 
+        /// <summary>Le pawn tient un poste de pilote du véhicule.</summary>
+        public static bool Drives(Pawn v, Pawn p) =>
+            v is VehiclePawn vp && vp.handlers != null && vp.handlers.Any(h => Moves(h) && h.thingOwner.Contains(p));
+
         /// <summary>Monte à bord : poste de pilote d'abord si demandé, puis tireur manquant, puis passager.</summary>
         public static bool TryBoard(Pawn v, Pawn p, bool driver)
         {
