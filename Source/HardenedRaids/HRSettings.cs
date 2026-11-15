@@ -158,7 +158,7 @@ namespace HardenedRaids
             l.GapLine();
 
             l.Label(Strings.T("SecTiers"));
-            l.CheckboxLabeled(Strings.T("EnableTiers"), ref EnableTiers);
+            l.CheckboxLabeled(Strings.T("EnableTiers"), ref EnableTiers, Strings.T("EnableTiersTip"));
             CostFactor = l.SliderLabeled(Strings.T("CostFactor", CostFactor.ToString("F2")), CostFactor, 0.5f, 2f, 0.5f, Strings.T("CostFactorTip"));
             CostFactor = Mathf.Round(CostFactor * 20f) / 20f;
             TierSpeed = l.SliderLabeled(Strings.T("TierSpeed", TierSpeed.ToString("F2")), TierSpeed, 0.5f, 3f, 0.5f, Strings.T("TierSpeedTip"));
