@@ -358,6 +358,7 @@ namespace HardenedRaids
             }
             if (worn == 0) return false;
             AddWarmthIfNeeded(pawn, s, request);
+            AddToxicResistanceIfNeeded(pawn, s, request);
             AddVacuumResistanceIfNeeded(pawn, s, request);
             return true;
         }
@@ -401,6 +402,53 @@ namespace HardenedRaids
             var ap = (Apparel)ThingMaker.MakeThing(warm.Value.thing, warm.Value.stuff);
             FinishGear(ap, pawn, s);
             pawn.apparel.Wear(ap, dropReplacedApparel: false);
+        }
+
+        /// <summary>Résistance toxique voulue selon la pollution de la case (PawnApparelGenerator.ToxicEnvironmentResistanceOverPollutionCurve).</summary>
+        private static readonly SimpleCurve ToxicNeededOverPollution = new SimpleCurve
+        {
+            new CurvePoint(0f, 0f),
+            new CurvePoint(0.5f, 0.5f),
+            new CurvePoint(1f, 0.85f),
+        };
+
+        /// <summary>
+        /// Biotech : sur une case polluée (&gt; 5 %), vanilla ajoute gratuitement un masque (masque à gaz, masque en tissu...) tant que
+        /// la tenue n'atteint pas la résistance voulue (PawnApparelGenerator.GenerateStartingApparelFor, apparelIgnorePollution
+        /// respecté, prix &lt;= 1,3 × masque à gaz, poids commonality / prix², 5 essais). Même règle ici, mais sans rien retirer de
+        /// la dotation : pas de masque si sa couche ou ses parties du corps sont prises, ni si une pièce portée résiste déjà
+        /// autant que lui (armure de marine de mods...).
+        /// </summary>
+        private static void AddToxicResistanceIfNeeded(Pawn pawn, Slot s, PawnGenerationRequest request)
+        {
+            if (!ModsConfig.BiotechActive || pawn.kindDef.apparelIgnorePollution) return;
+            StatDef stat = StatDefOf.ToxicEnvironmentResistance;
+            ThingDef gasMask = ThingDefOf.Apparel_GasMask;
+            if (stat == null || gasMask == null) return;
+            PlanetTile tile = GenerationTile(request);
+            if (!tile.Valid) return;
+            float pollution = Mathf.Clamp01(Find.WorldGrid[tile].pollution);
+            if (pollution <= 0.05f) return;
+            float needed = ToxicNeededOverPollution.Evaluate(pollution);
+            float maxPrice = (int)(StatDefOf.MarketValue.Worker.GetValueAbstract(gasMask) * 1.3f);
+            for (int i = 0; i < 5; i++)
+            {
+                float have = 0f, best = 0f;
+                foreach (Apparel w in pawn.apparel.WornApparel)
+                {
+                    float r = w.def.equippedStatOffsets.GetStatOffsetFromList(stat);
+                    have += r;
+                    best = Mathf.Max(best, r);
+                }
+                if (have >= needed) break;
+                ThingStuffPair? pick = Loadouts.ToxicCandidates(pawn, maxPrice).Where(p => p.ToxicEnvironmentResistance > best)
+                    .Cast<ThingStuffPair?>().RandomElementByWeightWithDefault(p => p.Value.Commonality / (p.Value.Price * p.Value.Price + 1f), 0f);
+                if (!pick.HasValue) break;
+                var ap = (Apparel)ThingMaker.MakeThing(pick.Value.thing, pick.Value.stuff);
+                FinishGear(ap, pawn, s);
+                pawn.apparel.Wear(ap, dropReplacedApparel: false);
+                HRLog.Msg($"{pawn.LabelShort} : {ap.def.label} ajouté (pollution {pollution:P0}, résistance {have:F2} < {needed:F2}).");
+            }
         }
 
         /// <summary>
