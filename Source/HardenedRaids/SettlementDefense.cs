@@ -20,15 +20,19 @@ namespace HardenedRaids
     ///  - Véhicules Vehicle Framework garés autour de la colonie (1 pour 15 défenseurs), sans lord : les tourelles des
     ///    véhicules PNJ tirent seules (VF active le tir automatique des véhicules non joueurs) dès qu'un tireur est à bord.
     /// Rien n'est sauvegardé par le mod : seuls des objets vanilla / VF ordinaires sont créés pendant la génération de la carte.
-    /// S'applique uniquement à une carte dont le parent est une colonie (Settlement) d'une faction humaine hostile au
-    /// moment de la génération : jamais aux colonies du joueur, alliées / neutres, abandonnées / détruites (autres
-    /// types de WorldObject), ni à la génération du monde (aucune carte n'y est générée).
+    /// S'applique à toute carte générée dont le parent est une colonie (Settlement) d'une faction humaine non joueur :
+    /// jamais aux colonies du joueur, abandonnées / détruites (autres types de WorldObject), ni à la génération du monde.
+    /// D1 : une colonie neutre ou alliée attaquée aussi. Vanilla (caravane, capsules, navette, gravship) et VF génèrent
+    /// sa carte AVANT SettlementUtility.AffectRelationsOnAttacked, et aucun chemin vanilla ne génère la carte d'une colonie
+    /// étrangère sans l'attaquer : elle reçoit la défense d'une hostile (Patch_AttackedSettlementGroup ci-dessous).
+    /// Aucun effet sur la diplomatie : rien ici ne touche aux relations, vanilla les change ensuite comme d'habitude.
     /// </summary>
     public static class SettlementDefense
     {
-        /// <summary>Génération en cours d'une colonie hostile (null sinon). Vidé à la fin de MapGenerator.GenerateMap.</summary>
+        /// <summary>Génération en cours d'une colonie hostile (null sinon). Un par MapGenerator.GenerateMap actif.</summary>
         public class Context
         {
+            public Game game;
             public Map map;
             public Faction faction;
             public float points;       // points des défenseurs
@@ -36,19 +40,68 @@ namespace HardenedRaids
             public int expectedDefenders;
             public int mannedLeft;     // tourelles servies encore autorisées
             public readonly HashSet<ThingDef> turretDefs = new HashSet<ThingDef>(); // modèles posés par nous
+            public readonly List<Servant> servants = new List<Servant>();           // P12 : servants vanilla non générés
         }
 
-        public static Context Current;
+        /// <summary>Servant de mortier vanilla (SymbolResolver_MannedMortar) remplacé par un défenseur après la génération.</summary>
+        public struct Servant
+        {
+            public Lord lord;                       // LordJob_ManTurrets créé par vanilla, vide
+            public IntVec3 cell;                    // case d'interaction du mortier
+            public PawnGenerationRequest request;   // repli vanilla si aucun défenseur n'est disponible
+        }
+
+        // Un contexte par génération de carte active (pile) : chaque MapGenerator.GenerateMap part sans contexte, celui de la
+        // génération englobante est remis à la fin (finalizer, même sur exception). Hors génération : jamais de contexte.
+        // La pile est bornée par l'imbrication des générations et vidée au changement de partie.
+        private static Context current;
+        private static readonly List<Context> outer = new List<Context>();
+        private static int depth;
+        private static Game stackGame;
+
+        /// <summary>Contexte de la génération de carte en cours (null hors génération ou si ce n'est pas une colonie hostile).</summary>
+        public static Context Current => current != null && current.game == Verse.Current.Game ? current : null;
+
+        /// <summary>Début de MapGenerator.GenerateMap : le contexte englobant est mis de côté.</summary>
+        public static void GenerationBegin()
+        {
+            if (stackGame != Verse.Current.Game) { outer.Clear(); depth = 0; current = null; stackGame = Verse.Current.Game; }
+            outer.Add(current);
+            current = null;
+            depth++;
+        }
+
+        /// <summary>Fin de MapGenerator.GenerateMap (toujours appelé) : contexte de cette génération jeté, l'englobant remis.</summary>
+        public static void GenerationEnd()
+        {
+            if (depth <= 0 || outer.Count == 0) { current = null; depth = 0; outer.Clear(); return; }
+            depth--;
+            current = outer[outer.Count - 1];
+            outer.RemoveAt(outer.Count - 1);
+        }
 
         public static readonly FloatRange VanillaPoints = new FloatRange(1150f, 1600f);
 
-        /// <summary>Faction d'une colonie humaine hostile au joueur, parent de la carte ; null sinon.</summary>
-        public static Faction HostileSettlementFaction(Map map)
+        /// <summary>Faction humaine non joueur d'une colonie parent de la carte (hostile, ou neutre / alliée attaquée : D1) ; null sinon.</summary>
+        public static Faction DefendedSettlementFaction(Map map)
         {
             if (map?.info?.parent is not Settlement s) return null;
             Faction f = s.Faction;
-            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction || !f.HostileTo(Faction.OfPlayer)) return null;
+            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction) return null;
             return f;
+        }
+
+        /// <summary>
+        /// D1 : groupe d'une faction neutre / alliée pendant la génération de la carte de sa colonie, que la génération
+        /// Hardened doit traiter comme hostile (mêmes conditions que RaidGenerator.Applies, hostilité exceptée).
+        /// </summary>
+        public static bool TreatAsHostile(PawnGroupMakerParms parms)
+        {
+            Context c = Current;
+            Faction f = parms?.faction;
+            if (c == null || f == null || c.faction != f || f.HostileTo(Faction.OfPlayer)) return false;   // hostile : chemin normal
+            if (!HRSettings.EnableTiers || GenContext.NonCombat > 0) return false;
+            return parms.groupKind == PawnGroupKindDefOf.Combat || parms.groupKind == PawnGroupKindDefOf.Settlement;
         }
 
         /// <summary>
@@ -68,19 +121,24 @@ namespace HardenedRaids
         /// <summary>Crée le contexte pour la carte en génération si c'est une colonie hostile ; renvoie les points des défenseurs.</summary>
         public static Context Begin(Map map, Faction rpFaction)
         {
-            if (Current != null && Current.map == map) return Current;
-            Faction f = HostileSettlementFaction(map);
+            if (depth <= 0 || map == null) return null;   // hors génération de carte : vanilla, aucun contexte posé
+            Context cur = Current;
+            if (cur != null) return cur.map == map ? cur : null;
+            Faction f = DefendedSettlementFaction(map);
             if (f == null || (rpFaction != null && rpFaction != f)) return null;
             float vanilla = VanillaPoints.RandomInRange;
             float points = vanilla;
-            if (HRSettings.UncapPoints && HRSettings.SettlementThreatShare > 0f)
-                points = Mathf.Max(vanilla, PlayerThreatNow() * HRSettings.SettlementThreatShare);
-            var ctx = new Context { map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points) };
+            // D8 : indépendant de UncapPoints. Réglage décoché : la menace reste plafonnée à 10 000 comme vanilla
+            // (StorytellerUtility.DefaultThreatPointsNow, MaxPoints), soit au plus 2 500 pts de défenseurs à 25 % ;
+            // tourelles et véhicules ne dépendent que de leurs propres réglages.
+            if (HRSettings.SettlementThreatShare > 0f)
+                points = Mathf.Max(vanilla, Mathf.Min(PlayerThreatNow(), PointsPatches.MaxPoints()) * HRSettings.SettlementThreatShare);
+            var ctx = new Context { game = Verse.Current.Game, map = map, faction = f, points = points, tierX = Tiers.TierX(f.def, points) };
             ctx.expectedDefenders = EstimateDefenders(f, points);
             // servants : au plus 1 défenseur sur 10 (les autres restent mobiles)
             ctx.mannedLeft = ctx.expectedDefenders / 10;
-            Current = ctx;
-            HRLog.Msg($"colonie hostile {f.Name} : défenseurs {points:F0} pts (vanilla {vanilla:F0}, part {HRSettings.SettlementThreatShare:P0}), palier {ctx.tierX:F2}, ~{ctx.expectedDefenders} défenseurs prévus");
+            current = ctx;
+            HRLog.Msg($"colonie {f.Name}{(f.HostileTo(Faction.OfPlayer) ? "" : " (neutre / alliée attaquée)")} : défenseurs {points:F0} pts (vanilla {vanilla:F0}, part {HRSettings.SettlementThreatShare:P0}), palier {ctx.tierX:F2}, ~{ctx.expectedDefenders} défenseurs prévus");
             return ctx;
         }
 
@@ -98,8 +156,6 @@ namespace HardenedRaids
             catch (Exception e) { HRLog.Msg("estimation des défenseurs : " + e.Message); }
             return Mathf.Max(1, Mathf.RoundToInt(points / 120f));
         }
-
-        public static void End() => Current = null;
 
         /// <summary>Points à imposer quand le générateur n'a pas reçu de points explicites (null = ne rien changer).</summary>
         public static float? PointsFor(Map map, Faction rpFaction)
@@ -124,6 +180,122 @@ namespace HardenedRaids
                 if (p.HasValue) rp.settlementPawnGroupPoints = p.Value;
             }
             catch (Exception e) { Log.Warning("[Hardened Raids] settlement defenders: " + e.Message); }
+        }
+    }
+
+    // ---------------------------------------------------------------- D1 : colonie neutre / alliée attaquée
+    /// <summary>
+    /// RaidGenerator.Applies exige une faction hostile : pour une colonie neutre / alliée en cours de génération (attaque,
+    /// voir SettlementDefense), ses groupes passent ici par la génération Hardened, aperçu (nombre de lits) compris.
+    /// Les patchs Hardened de ces méthodes ne font rien pour une faction non hostile : pas de double génération.
+    /// </summary>
+    [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), "GeneratePawns",
+        new[] { typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(List<Pawn>), typeof(bool) })]
+    public static class Patch_AttackedSettlementGroup
+    {
+        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns)
+        {
+            if (groupMaker == null || !SettlementDefense.TreatAsHostile(parms)) return true;
+            try
+            {
+                if (RaidGenerator.TryGenerate(parms, groupMaker, outPawns)) return false;
+            }
+            catch (Exception e)
+            {
+                Log.Error("[Hardened Raids] settlement defenders generation failed, falling back to vanilla: " + e);
+                foreach (Pawn p in outPawns) if (!p.Destroyed) p.Destroy();
+                outPawns.Clear();
+                GenContext.Current = null;
+            }
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), nameof(PawnGroupKindWorker_Normal.GeneratePawnKindsExample))]
+    public static class Patch_AttackedSettlementExample
+    {
+        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, ref IEnumerable<PawnKindDef> __result)
+        {
+            if (groupMaker == null || !SettlementDefense.TreatAsHostile(parms)) return true;
+            try
+            {
+                List<PawnKindDef> kinds = RaidGenerator.ExampleKinds(parms, groupMaker);
+                if (kinds == null) return true;
+                __result = kinds;
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] settlement pawn kinds example: " + e.Message);
+                return true;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- P12 : servants des mortiers
+    /// <summary>
+    /// SymbolResolver_MannedMortar (défense périphérique) génère son servant à part : faction.RandomPawnKind(), hors
+    /// PawnGroupKindWorker_Normal, donc hors palier et dotation Hardened. Pendant la génération d'une colonie défendue,
+    /// ce pawn n'est pas généré : son lord vanilla (LordJob_ManTurrets) reçoit après la génération le défenseur Hardened le
+    /// plus proche, comme les tourelles servies des mods. Sans défenseur disponible, le pawn vanilla est généré (repli).
+    /// Aucun coût : quelques tests sur le symbole "pawn" de BaseGen, 0 à 3 mortiers par colonie.
+    /// </summary>
+    [HarmonyPatch(typeof(SymbolResolver_SinglePawn), nameof(SymbolResolver_SinglePawn.Resolve))]
+    public static class Patch_SettlementMortarServant
+    {
+        public static bool Prefix(ResolveParams rp)
+        {
+            try
+            {
+                if (rp.singlePawnToSpawn != null || !rp.singlePawnGenerationRequest.HasValue || rp.singlePawnLord?.LordJob is not LordJob_ManTurrets) return true;
+                if (!HRSettings.EnableTiers) return true;   // défenseurs vanilla : servant vanilla
+                SettlementDefense.Context ctx = SettlementDefense.Current;
+                if (ctx == null || ctx.map != BaseGen.globalSettings.map) return true;
+                PawnGenerationRequest req = rp.singlePawnGenerationRequest.Value;
+                if (req.Faction != ctx.faction || rp.rect.Area != 1) return true;
+                ctx.servants.Add(new SettlementDefense.Servant { lord = rp.singlePawnLord, cell = rp.rect.CenterCell, request = req });
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] mortar crew: " + e.Message);
+                return true;
+            }
+        }
+
+        /// <summary>Après la génération : chaque mortier reçoit le défenseur le plus proche (pas le chef), avant les tourelles.</summary>
+        public static void AfterGeneration(SettlementDefense.Context ctx, List<Pawn> defenders)
+        {
+            if (ctx.servants.Count == 0) return;
+            Map map = ctx.map;
+            int taken = 0, fallback = 0;
+            foreach (SettlementDefense.Servant sv in ctx.servants)
+            {
+                try
+                {
+                    Lord lord = sv.lord != null && map.lordManager.lords.Contains(sv.lord) ? sv.lord
+                        : LordMaker.MakeNewLord(ctx.faction, new LordJob_ManTurrets(), map);
+                    // au moins un défenseur reste mobile
+                    Pawn man = defenders.Count <= 1 ? null : defenders.Where(p => !p.kindDef.factionLeader)
+                        .OrderBy(p => (p.Position - sv.cell).LengthHorizontalSquared).FirstOrDefault();
+                    if (man != null)
+                    {
+                        defenders.Remove(man);
+                        man.GetLord()?.RemovePawn(man);
+                        lord.AddPawn(man);
+                        taken++;
+                        continue;
+                    }
+                    // repli : le servant vanilla, comme sans le mod
+                    Pawn p = PawnGenerator.GeneratePawn(sv.request);
+                    IntVec3 c = sv.cell.Standable(map) && sv.cell.GetFirstPawn(map) == null ? sv.cell : CellFinder.RandomClosewalkCellNear(sv.cell, map, 3);
+                    GenSpawn.Spawn(p, c, map);
+                    lord.AddPawn(p);
+                    fallback++;
+                }
+                catch (Exception e) { Log.Warning("[Hardened Raids] mortar crew: " + e.Message); }
+            }
+            HRLog.Msg($"colonie {ctx.faction.Name} : {ctx.servants.Count} mortier(s), {taken} servi(s) par des défenseurs, {fallback} servant(s) vanilla");
         }
     }
 
@@ -310,17 +482,18 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(MapGenerator), nameof(MapGenerator.GenerateMap))]
     public static class Patch_SettlementAfterGen
     {
+        public static void Prefix() => SettlementDefense.GenerationBegin();
+
         public static void Postfix(Map __result)
         {
             SettlementDefense.Context ctx = SettlementDefense.Current;
-            if (ctx == null) return;
-            SettlementDefense.End();
-            if (__result == null || ctx.map != __result) return;
+            if (ctx == null || __result == null || ctx.map != __result) return;
             try
             {
                 // défenseurs : pawns humains de la faction, valides, dans un lord de défense de base
                 List<Pawn> defenders = __result.mapPawns.SpawnedPawnsInFaction(ctx.faction)
                     .Where(p => p.RaceProps.Humanlike && !p.Downed && !p.Dead && IsDefendLord(p.GetLord()?.LordJob)).ToList();
+                Patch_SettlementMortarServant.AfterGeneration(ctx, defenders);
                 SettlementTurrets.AfterGeneration(ctx, defenders);
                 if (HRSettings.SettlementVehicles && VehicleGate.Active && ctx.faction.def.techLevel >= TechLevel.Industrial
                     && ctx.tierX >= HRSettings.VehicleMinTier)
@@ -335,9 +508,7 @@ namespace HardenedRaids
         // LordJob_DefendBase vanilla, ou LordJob_DefendBaseNoEat de KCSG
         private static bool IsDefendLord(LordJob j) => j != null && (j is LordJob_DefendBase || j.GetType().Name.StartsWith("LordJob_DefendBase"));
 
-        public static void Finalizer(Exception __exception)
-        {
-            if (__exception != null) SettlementDefense.End();   // génération ratée : pas de contexte résiduel
-        }
+        // toujours, même sur exception : contexte de cette génération jeté, celui d'une génération englobante remis
+        public static void Finalizer() => SettlementDefense.GenerationEnd();
     }
 }
