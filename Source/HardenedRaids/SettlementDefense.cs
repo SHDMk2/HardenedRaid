@@ -20,9 +20,12 @@ namespace HardenedRaids
     ///  - Véhicules Vehicle Framework garés autour de la colonie (1 pour 15 défenseurs), sans lord : les tourelles des
     ///    véhicules PNJ tirent seules (VF active le tir automatique des véhicules non joueurs) dès qu'un tireur est à bord.
     /// Rien n'est sauvegardé par le mod : seuls des objets vanilla / VF ordinaires sont créés pendant la génération de la carte.
-    /// S'applique uniquement à une carte dont le parent est une colonie (Settlement) d'une faction humaine hostile au
-    /// moment de la génération : jamais aux colonies du joueur, alliées / neutres, abandonnées / détruites (autres
-    /// types de WorldObject), ni à la génération du monde (aucune carte n'y est générée).
+    /// S'applique à toute carte générée dont le parent est une colonie (Settlement) d'une faction humaine non joueur :
+    /// jamais aux colonies du joueur, abandonnées / détruites (autres types de WorldObject), ni à la génération du monde.
+    /// D1 : une colonie neutre ou alliée attaquée aussi. Vanilla (caravane, capsules, navette, gravship) et VF génèrent
+    /// sa carte AVANT SettlementUtility.AffectRelationsOnAttacked, et aucun chemin vanilla ne génère la carte d'une colonie
+    /// étrangère sans l'attaquer : elle reçoit la défense d'une hostile (Patch_AttackedSettlementGroup ci-dessous).
+    /// Aucun effet sur la diplomatie : rien ici ne touche aux relations, vanilla les change ensuite comme d'habitude.
     /// </summary>
     public static class SettlementDefense
     {
@@ -70,13 +73,26 @@ namespace HardenedRaids
 
         public static readonly FloatRange VanillaPoints = new FloatRange(1150f, 1600f);
 
-        /// <summary>Faction d'une colonie humaine hostile au joueur, parent de la carte ; null sinon.</summary>
-        public static Faction HostileSettlementFaction(Map map)
+        /// <summary>Faction humaine non joueur d'une colonie parent de la carte (hostile, ou neutre / alliée attaquée : D1) ; null sinon.</summary>
+        public static Faction DefendedSettlementFaction(Map map)
         {
             if (map?.info?.parent is not Settlement s) return null;
             Faction f = s.Faction;
-            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction || !f.HostileTo(Faction.OfPlayer)) return null;
+            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction) return null;
             return f;
+        }
+
+        /// <summary>
+        /// D1 : groupe d'une faction neutre / alliée pendant la génération de la carte de sa colonie, que la génération
+        /// Hardened doit traiter comme hostile (mêmes conditions que RaidGenerator.Applies, hostilité exceptée).
+        /// </summary>
+        public static bool TreatAsHostile(PawnGroupMakerParms parms)
+        {
+            Context c = Current;
+            Faction f = parms?.faction;
+            if (c == null || f == null || c.faction != f || f.HostileTo(Faction.OfPlayer)) return false;   // hostile : chemin normal
+            if (!HRSettings.EnableTiers || GenContext.NonCombat > 0) return false;
+            return parms.groupKind == PawnGroupKindDefOf.Combat || parms.groupKind == PawnGroupKindDefOf.Settlement;
         }
 
         /// <summary>
@@ -99,7 +115,7 @@ namespace HardenedRaids
             if (depth <= 0 || map == null) return null;   // hors génération de carte : vanilla, aucun contexte posé
             Context cur = Current;
             if (cur != null) return cur.map == map ? cur : null;
-            Faction f = HostileSettlementFaction(map);
+            Faction f = DefendedSettlementFaction(map);
             if (f == null || (rpFaction != null && rpFaction != f)) return null;
             float vanilla = VanillaPoints.RandomInRange;
             float points = vanilla;
@@ -113,7 +129,7 @@ namespace HardenedRaids
             // servants : au plus 1 défenseur sur 10 (les autres restent mobiles)
             ctx.mannedLeft = ctx.expectedDefenders / 10;
             current = ctx;
-            HRLog.Msg($"colonie hostile {f.Name} : défenseurs {points:F0} pts (vanilla {vanilla:F0}, part {HRSettings.SettlementThreatShare:P0}), palier {ctx.tierX:F2}, ~{ctx.expectedDefenders} défenseurs prévus");
+            HRLog.Msg($"colonie {f.Name}{(f.HostileTo(Faction.OfPlayer) ? "" : " (neutre / alliée attaquée)")} : défenseurs {points:F0} pts (vanilla {vanilla:F0}, part {HRSettings.SettlementThreatShare:P0}), palier {ctx.tierX:F2}, ~{ctx.expectedDefenders} défenseurs prévus");
             return ctx;
         }
 
@@ -154,6 +170,55 @@ namespace HardenedRaids
                 if (p.HasValue) rp.settlementPawnGroupPoints = p.Value;
             }
             catch (Exception e) { Log.Warning("[Hardened Raids] settlement defenders: " + e.Message); }
+        }
+    }
+
+    // ---------------------------------------------------------------- D1 : colonie neutre / alliée attaquée
+    /// <summary>
+    /// RaidGenerator.Applies exige une faction hostile : pour une colonie neutre / alliée en cours de génération (attaque,
+    /// voir SettlementDefense), ses groupes passent ici par la génération Hardened, aperçu (nombre de lits) compris.
+    /// Les patchs Hardened de ces méthodes ne font rien pour une faction non hostile : pas de double génération.
+    /// </summary>
+    [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), "GeneratePawns",
+        new[] { typeof(PawnGroupMakerParms), typeof(PawnGroupMaker), typeof(List<Pawn>), typeof(bool) })]
+    public static class Patch_AttackedSettlementGroup
+    {
+        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, List<Pawn> outPawns)
+        {
+            if (groupMaker == null || !SettlementDefense.TreatAsHostile(parms)) return true;
+            try
+            {
+                if (RaidGenerator.TryGenerate(parms, groupMaker, outPawns)) return false;
+            }
+            catch (Exception e)
+            {
+                Log.Error("[Hardened Raids] settlement defenders generation failed, falling back to vanilla: " + e);
+                foreach (Pawn p in outPawns) if (!p.Destroyed) p.Destroy();
+                outPawns.Clear();
+                GenContext.Current = null;
+            }
+            return true;
+        }
+    }
+
+    [HarmonyPatch(typeof(PawnGroupKindWorker_Normal), nameof(PawnGroupKindWorker_Normal.GeneratePawnKindsExample))]
+    public static class Patch_AttackedSettlementExample
+    {
+        public static bool Prefix(PawnGroupMakerParms parms, PawnGroupMaker groupMaker, ref IEnumerable<PawnKindDef> __result)
+        {
+            if (groupMaker == null || !SettlementDefense.TreatAsHostile(parms)) return true;
+            try
+            {
+                List<PawnKindDef> kinds = RaidGenerator.ExampleKinds(parms, groupMaker);
+                if (kinds == null) return true;
+                __result = kinds;
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] settlement pawn kinds example: " + e.Message);
+                return true;
+            }
         }
     }
 
