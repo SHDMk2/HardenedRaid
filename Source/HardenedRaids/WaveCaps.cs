@@ -8,10 +8,12 @@ using Verse;
 namespace HardenedRaids
 {
     /// <summary>
-    /// Plafond par vague pour la génération vanilla d'un raid : repli après un échec de la génération Hardened
-    /// (B12 / A10) et factions non humaines (A12 : mécanoïdes…). Le tirage vanilla des pawnkinds
-    /// (ChoosePawnGenOptionsByPoints, rien n'est encore généré) est tronqué au plafond ; le reste part en vagues
-    /// différées, chacune avec les points des pawnkinds qu'elle remplace.
+    /// Plafond par vague pour la génération vanilla d'un groupe : repli après un échec de la génération Hardened
+    /// (B12 / A10), factions non humaines (A12 : mécanoïdes…), humains quand les paliers sont coupés (EnableTiers
+    /// décoché : DU3 pour les raids, <see cref="OutOfRaidCap"/> hors raid). Le tirage vanilla des pawnkinds
+    /// (ChoosePawnGenOptionsByPoints, rien n'est encore généré) est tronqué au plafond. Raid (groupe principal) : le reste
+    /// part en vagues différées, chacune avec les points des pawnkinds qu'elle remplace (tolérance de 10 %). Hors raid :
+    /// une vague, plafond strict (× SettlementCapFactor pour les défenseurs d'une colonie : DU2), surplus perdu.
     /// </summary>
     public static class VanillaWaveCap
     {

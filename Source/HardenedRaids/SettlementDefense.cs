@@ -13,8 +13,10 @@ using Verse.AI.Group;
 namespace HardenedRaids
 {
     /// <summary>
-    /// Lot uncap, décision D2 : défenseurs des colonies de faction hostiles.
+    /// Lot uncap, décision D2 : défenseurs des colonies de faction hostiles, et des colonies neutres / alliées attaquées (DU1).
     ///  - Points des défenseurs = part (25 %) de la menace actuelle du joueur, jamais moins que vanilla (1150-1600).
+    ///    Effectif plafonné à SettlementCapFactor × le plafond par vague (DU2), une seule vague, surplus perdu, paliers
+    ///    actifs ou non (génération vanilla : VanillaWaveCap.OutOfRaidCap).
     ///  - Tourelles des mods (catalogue de siège) à la place des mini-tourelles vanilla de la défense périphérique, plus
     ///    quelques-unes selon le palier ; servants pris parmi les défenseurs (lord vanilla LordJob_ManTurrets).
     ///  - Véhicules Vehicle Framework garés autour de la colonie (1 pour 15 défenseurs), sans lord : les tourelles des
@@ -22,14 +24,14 @@ namespace HardenedRaids
     /// Rien n'est sauvegardé par le mod : seuls des objets vanilla / VF ordinaires sont créés pendant la génération de la carte.
     /// S'applique à toute carte générée dont le parent est une colonie (Settlement) d'une faction humaine non joueur :
     /// jamais aux colonies du joueur, abandonnées / détruites (autres types de WorldObject), ni à la génération du monde.
-    /// D1 : une colonie neutre ou alliée attaquée aussi. Vanilla (caravane, capsules, navette, gravship) et VF génèrent
+    /// DU1 : une colonie neutre ou alliée attaquée aussi. Vanilla (caravane, capsules, navette, gravship) et VF génèrent
     /// sa carte AVANT SettlementUtility.AffectRelationsOnAttacked, et aucun chemin vanilla ne génère la carte d'une colonie
     /// étrangère sans l'attaquer : elle reçoit la défense d'une hostile (TreatAsHostile, testé par RaidGenerator.Applies).
     /// Aucun effet sur la diplomatie : rien ici ne touche aux relations, vanilla les change ensuite comme d'habitude.
     /// </summary>
     public static class SettlementDefense
     {
-        /// <summary>Génération en cours d'une colonie hostile (null sinon). Un par MapGenerator.GenerateMap actif.</summary>
+        /// <summary>Génération en cours d'une colonie défendue, hostile ou neutre / alliée attaquée (DU1) (null sinon). Un par MapGenerator.GenerateMap actif.</summary>
         public class Context
         {
             public Game game;
@@ -61,7 +63,7 @@ namespace HardenedRaids
         private static int depth;
         private static Game stackGame;
 
-        /// <summary>Contexte de la génération de carte en cours (null hors génération ou si ce n'est pas une colonie hostile).</summary>
+        /// <summary>Contexte de la génération de carte en cours (null hors génération ou si ce n'est pas une colonie défendue : hostile, ou neutre / alliée attaquée).</summary>
         public static Context Current => current != null && current.game == Verse.Current.Game ? current : null;
 
         /// <summary>Début de MapGenerator.GenerateMap : le contexte englobant est mis de côté.</summary>
@@ -93,7 +95,7 @@ namespace HardenedRaids
 
         public static readonly FloatRange VanillaPoints = new FloatRange(1150f, 1600f);
 
-        /// <summary>Faction humaine non joueur d'une colonie parent de la carte (hostile, ou neutre / alliée attaquée : D1) ; null sinon.</summary>
+        /// <summary>Faction humaine non joueur d'une colonie parent de la carte (hostile, ou neutre / alliée attaquée : DU1) ; null sinon.</summary>
         public static Faction DefendedSettlementFaction(Map map)
         {
             if (map?.info?.parent is not Settlement s) return null;
@@ -103,7 +105,7 @@ namespace HardenedRaids
         }
 
         /// <summary>
-        /// D1 : groupe d'une faction neutre / alliée pendant la génération de la carte de sa colonie, que la génération
+        /// DU1 : groupe d'une faction neutre / alliée pendant la génération de la carte de sa colonie, que la génération
         /// Hardened doit traiter comme hostile (appelé par RaidGenerator.Applies).
         /// </summary>
         public static bool TreatAsHostile(PawnGroupMakerParms parms)
@@ -138,7 +140,7 @@ namespace HardenedRaids
             return best >= 0f ? best : StorytellerUtility.DefaultThreatPointsNow(Find.World);
         }
 
-        /// <summary>Crée le contexte pour la carte en génération si c'est une colonie hostile ; renvoie les points des défenseurs.</summary>
+        /// <summary>Crée le contexte pour la carte en génération si c'est une colonie défendue (hostile, ou neutre / alliée attaquée : DU1) ; renvoie son contexte (points des défenseurs…).</summary>
         public static Context Begin(Map map, Faction rpFaction)
         {
             if (depth <= 0 || map == null) return null;   // hors génération de carte : vanilla, aucun contexte posé
@@ -148,7 +150,7 @@ namespace HardenedRaids
             if (f == null || (rpFaction != null && rpFaction != f)) return null;
             float vanilla = VanillaPoints.RandomInRange;
             float points = vanilla;
-            // D8 : indépendant de UncapPoints. Réglage décoché : la menace reste plafonnée à 10 000 comme vanilla
+            // DU8 : indépendant de UncapPoints. Réglage décoché : la menace reste plafonnée à 10 000 comme vanilla
             // (StorytellerUtility.DefaultThreatPointsNow, MaxPoints), soit au plus 2 500 pts de défenseurs à 25 % ;
             // tourelles et véhicules ne dépendent que de leurs propres réglages.
             if (HRSettings.SettlementThreatShare > 0f)

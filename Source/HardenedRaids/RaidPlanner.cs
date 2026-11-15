@@ -34,7 +34,7 @@ namespace HardenedRaids
         public float frac;     // part du noyau (palier haut)
         public float avgPrice; // prix moyen prévu d'un raider (noyau et troupe au prorata)
 
-        /// <summary>Colonie de faction (D2) : une seule vague, jusqu'à ce multiple du plafond par vague ; le surplus est perdu.</summary>
+        /// <summary>Colonie de faction (DU2) : une seule vague, jusqu'à ce multiple du plafond par vague ; le surplus est perdu.</summary>
         public const int SettlementCapFactor = 2;
 
         /// <param name="allowWaves">false hors raid (navette écrasée, embuscade, site…) : une seule vague, plafonnée.</param>
@@ -166,7 +166,7 @@ namespace HardenedRaids
             if (GenContext.NonCombat > 0) return false;   // cadavres d'une colonie abandonnée, d'un appel de détresse…
             Faction f = parms.faction;
             if (f == null || f.IsPlayer || !f.def.humanlikeFaction) return false;
-            // D1 : colonie neutre / alliée attaquée, carte générée avant le passage à l'hostilité → traitée comme hostile
+            // DU1 : colonie neutre / alliée attaquée, carte générée avant le passage à l'hostilité → traitée comme hostile
             if (!f.HostileTo(Faction.OfPlayer) && !SettlementDefense.TreatAsHostile(parms)) return false;
             if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return false;
             return true;
@@ -174,7 +174,7 @@ namespace HardenedRaids
 
         /// <summary>
         /// Multiple du plafond par vague d'un groupe hors raid : défenseurs d'une colonie de faction (groupe Settlement sur la
-        /// case d'une colonie, pas un avant-poste ni un site) → <see cref="RaidPlan.SettlementCapFactor"/> (D2), sinon 1.
+        /// case d'une colonie, pas un avant-poste ni un site) → <see cref="RaidPlan.SettlementCapFactor"/> (DU2), sinon 1.
         /// </summary>
         internal static int SingleWaveCapFactor(PawnGroupMakerParms parms)
         {
