@@ -240,9 +240,29 @@ namespace HardenedRaids
             Instance = this;
             GetSettings<HRSettings>();
             var harmony = new HarmonyLib.Harmony("shdmk2.hardenedraids");
-            harmony.PatchAll();
+            PatchAllSafe(harmony);
             Patch_SpawnNearVehicle.Apply(harmony);
             Log.Message("[Hardened Raids] loaded.");
+        }
+
+        /// <summary>
+        /// PatchAll classe par classe : une classe de patch qui échoue (méthode cible absente, mod incompatible…) est
+        /// signalée et ignorée, au lieu d'interrompre PatchAll et le constructeur du mod (plus de réglages, patchs partiels).
+        /// </summary>
+        private static void PatchAllSafe(HarmonyLib.Harmony harmony)
+        {
+            int failed = 0;
+            foreach (System.Type t in HarmonyLib.AccessTools.GetTypesFromAssembly(typeof(HardenedRaidsMod).Assembly))
+            {
+                if (t.GetCustomAttributes(typeof(HarmonyLib.HarmonyAttribute), true).Length == 0) continue;
+                try { harmony.CreateClassProcessor(t).Patch(); }
+                catch (System.Exception e)
+                {
+                    failed++;
+                    Log.Error($"[Hardened Raids] patch {t.Name} failed, skipped: {e}");
+                }
+            }
+            if (failed > 0) Log.Error($"[Hardened Raids] {failed} patch class(es) failed, see above.");
         }
 
         public override string SettingsCategory() => "Hardened Raids";

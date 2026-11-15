@@ -450,7 +450,7 @@ namespace HardenedRaids
 
         private static IntVec3 Find(Map map, MechClusterSketch sketch, int maxTries, float closeChance, bool strict)
         {
-            Prepare(map, sketch, out Vector3 offset, out float radius);
+            PrepareGrids(map, sketch, out Vector3 offset, out float radius);
             IntVec3 best = IntVec3.Invalid;
             float bestScore = float.MinValue;
             if (Rand.Chance(closeChance))
@@ -478,7 +478,8 @@ namespace HardenedRaids
         }
 
         /// <summary>Grille « à 5 cases ou moins d'un bâtiment / colon » et zones des grappes actives de la carte.</summary>
-        private static void Prepare(Map map, MechClusterSketch sketch, out Vector3 offset, out float radius)
+        // nom réservé : une méthode « Prepare » d'une classe [HarmonyPatch] est appelée par Harmony avant le patch
+        private static void PrepareGrids(Map map, MechClusterSketch sketch, out Vector3 offset, out float radius)
         {
             int cells = map.cellIndices.NumGridCells;
             if (nearColony == null || nearColony.Length < cells) nearColony = new bool[cells];
