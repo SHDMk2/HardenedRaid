@@ -193,6 +193,7 @@ namespace HardenedRaids
             return t;
         }
 
+        /// <summary>Avant la sauvegarde : cibles détruites ou jetées (Destroyed couvre Discarded) retirées, jamais les autres.</summary>
         internal static void CleanForSave(IncidentParms t)
         {
             t?.attackTargets?.RemoveAll(x => x == null || x.Destroyed);
@@ -255,6 +256,13 @@ namespace HardenedRaids
 
         public override void ExposeData()
         {
+            // carte retirée du jeu (site abandonné, carte temporaire…) : sa référence ne se résoudrait plus au chargement ;
+            // la vague n'aurait de toute façon jamais été lancée (Fire l'annule)
+            if (Scribe.mode == LoadSaveMode.Saving && pending != null)
+            {
+                int n = pending.RemoveAll(w => w == null || w.map == null || !Find.Maps.Contains(w.map));
+                if (n > 0) HRLog.Msg($"{n} vague(s) visant une carte disparue retirée(s) avant la sauvegarde.");
+            }
             Scribe_Collections.Look(ref pending, "pending", LookMode.Deep);
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
             {
