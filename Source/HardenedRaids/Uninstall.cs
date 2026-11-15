@@ -140,6 +140,8 @@ namespace HardenedRaids
                     Replace(l, map, ExitJob);
                     continue;
                 }
+                // colons enlevés à bord : déposés (les lords qui suivent n'enregistrent pas l'enlèvement à la sortie)
+                foreach (Pawn v in l.ownedPawns.ToList()) if (v.Spawned) DropCaptivesVF(v);
                 if (!leave)
                 {
                     // ceux qui n'ont pas encore débarqué descendent maintenant, dans le lord d'infanterie (vanilla) ;
@@ -198,6 +200,9 @@ namespace HardenedRaids
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void ReadyVF(Pawn v) => VehicleCompat.Ready(v);
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void DropCaptivesVF(Pawn v) => VehicleCompat.DropCaptives(v);
 
         /// <summary>
         /// Ni départ ni combat possible : sans pilote (après avoir mis un passager au volant) ou immobilisé. Pendant le raid,

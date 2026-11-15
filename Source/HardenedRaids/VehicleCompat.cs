@@ -462,6 +462,29 @@ namespace HardenedRaids
             }
         }
 
+        /// <summary>
+        /// Préparation de la désactivation : un colon (ou tout pawn d'une autre faction) à bord d'un véhicule de convoi est
+        /// déposé à côté. Le véhicule passe dans un lord vanilla ou VF : KidnapAboard ne vaudrait plus et il l'emporterait
+        /// sans enlèvement enregistré (perdu). Retrait direct (pas DisembarkPawn : VF le mettrait dans le lord du véhicule).
+        /// </summary>
+        public static int DropCaptives(Pawn vehicle)
+        {
+            if (vehicle is not VehiclePawn vp || !vp.Spawned || vp.Faction == null) return 0;
+            var victims = new List<Pawn>();
+            foreach (Thing t in vp.inventory.innerContainer) if (t is Pawn x) victims.Add(x);
+            if (vp.handlers != null) foreach (VehicleRoleHandler h in vp.handlers) victims.AddRange(h.thingOwner.InnerListForReading);
+            int n = 0;
+            foreach (Pawn x in victims.Distinct().ToList())
+            {
+                if (x.Faction == null || x.Faction == vp.Faction || !x.RaceProps.Humanlike || x.Dead) continue;
+                if (!vp.RemovePawn(x)) continue;
+                if (!GenPlace.TryPlaceThing(x, vp.Position, vp.Map, ThingPlaceMode.Near)) GenSpawn.Spawn(x, CellFinder.RandomClosewalkCellNear(vp.Position, vp.Map, 6), vp.Map);
+                n++;
+                HRLog.Msg($"désactivation : {x.LabelShort} déposé(e) par {vp.LabelShort}.");
+            }
+            return n;
+        }
+
         public static bool IsExiting(Pawn v) => v.CurJob != null && v.CurJob.exitMapOnArrival;
 
         /// <summary>Le véhicule quitte la carte (avec tout ce qu'il a à bord). Faux si impossible pour l'instant.</summary>
