@@ -30,6 +30,9 @@ namespace HardenedRaids
     {
         public const int MaxSide = 60;              // côté max d'une grappe, après le facteur aléatoire
         public const int StaggerTicks = 120;        // écart entre deux grappes différées d'un même groupe
+        // fenêtre de réessai d'une grappe différée dont le tir échoue (pas d'emplacement…) : la file vanilla la retente
+        // toutes les ~833 ticks (QueuedIncident.RetryIntervalTicks) pendant 1 jour, puis l'abandonne
+        public const int RetryTicks = GenDate.TicksPerDay;
 
         public static float Budget => Mathf.Max(10000f, HRSettings.MechClusterBudget);
         public static int MaxSimultaneous => Mathf.Max(1, HRSettings.MaxSimultaneousClusters);
@@ -56,7 +59,7 @@ namespace HardenedRaids
                 if (i % group == 0) tick += Mathf.RoundToInt(Rand.Range(HRSettings.WaveDelayHoursMin, HRSettings.WaveDelayHoursMax) * GenDate.TicksPerHour);
                 else tick += StaggerTicks;
                 var parms = new IncidentParms { target = map, points = perCluster, forced = true };
-                Find.Storyteller.incidentQueue.Add(IncidentDefOf.MechCluster, tick, parms);
+                Find.Storyteller.incidentQueue.Add(IncidentDefOf.MechCluster, tick, parms, RetryTicks);
             }
         }
 
