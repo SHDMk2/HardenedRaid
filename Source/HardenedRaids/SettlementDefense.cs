@@ -40,6 +40,15 @@ namespace HardenedRaids
             public int expectedDefenders;
             public int mannedLeft;     // tourelles servies encore autorisées
             public readonly HashSet<ThingDef> turretDefs = new HashSet<ThingDef>(); // modèles posés par nous
+            public readonly List<Servant> servants = new List<Servant>();           // P12 : servants vanilla non générés
+        }
+
+        /// <summary>Servant de mortier vanilla (SymbolResolver_MannedMortar) remplacé par un défenseur après la génération.</summary>
+        public struct Servant
+        {
+            public Lord lord;                       // LordJob_ManTurrets créé par vanilla, vide
+            public IntVec3 cell;                    // case d'interaction du mortier
+            public PawnGenerationRequest request;   // repli vanilla si aucun défenseur n'est disponible
         }
 
         // Un contexte par génération de carte active (pile) : chaque MapGenerator.GenerateMap part sans contexte, celui de la
@@ -219,6 +228,73 @@ namespace HardenedRaids
                 Log.Warning("[Hardened Raids] settlement pawn kinds example: " + e.Message);
                 return true;
             }
+        }
+    }
+
+    // ---------------------------------------------------------------- P12 : servants des mortiers
+    /// <summary>
+    /// SymbolResolver_MannedMortar (défense périphérique) génère son servant à part : faction.RandomPawnKind(), hors
+    /// PawnGroupKindWorker_Normal, donc hors palier et dotation Hardened. Pendant la génération d'une colonie défendue,
+    /// ce pawn n'est pas généré : son lord vanilla (LordJob_ManTurrets) reçoit après la génération le défenseur Hardened le
+    /// plus proche, comme les tourelles servies des mods. Sans défenseur disponible, le pawn vanilla est généré (repli).
+    /// Aucun coût : quelques tests sur le symbole "pawn" de BaseGen, 0 à 3 mortiers par colonie.
+    /// </summary>
+    [HarmonyPatch(typeof(SymbolResolver_SinglePawn), nameof(SymbolResolver_SinglePawn.Resolve))]
+    public static class Patch_SettlementMortarServant
+    {
+        public static bool Prefix(ResolveParams rp)
+        {
+            try
+            {
+                if (rp.singlePawnToSpawn != null || !rp.singlePawnGenerationRequest.HasValue || rp.singlePawnLord?.LordJob is not LordJob_ManTurrets) return true;
+                if (!HRSettings.EnableTiers) return true;   // défenseurs vanilla : servant vanilla
+                SettlementDefense.Context ctx = SettlementDefense.Current;
+                if (ctx == null || ctx.map != BaseGen.globalSettings.map) return true;
+                PawnGenerationRequest req = rp.singlePawnGenerationRequest.Value;
+                if (req.Faction != ctx.faction || rp.rect.Area != 1) return true;
+                ctx.servants.Add(new SettlementDefense.Servant { lord = rp.singlePawnLord, cell = rp.rect.CenterCell, request = req });
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] mortar crew: " + e.Message);
+                return true;
+            }
+        }
+
+        /// <summary>Après la génération : chaque mortier reçoit le défenseur le plus proche (pas le chef), avant les tourelles.</summary>
+        public static void AfterGeneration(SettlementDefense.Context ctx, List<Pawn> defenders)
+        {
+            if (ctx.servants.Count == 0) return;
+            Map map = ctx.map;
+            int taken = 0, fallback = 0;
+            foreach (SettlementDefense.Servant sv in ctx.servants)
+            {
+                try
+                {
+                    Lord lord = sv.lord != null && map.lordManager.lords.Contains(sv.lord) ? sv.lord
+                        : LordMaker.MakeNewLord(ctx.faction, new LordJob_ManTurrets(), map);
+                    // au moins un défenseur reste mobile
+                    Pawn man = defenders.Count <= 1 ? null : defenders.Where(p => !p.kindDef.factionLeader)
+                        .OrderBy(p => (p.Position - sv.cell).LengthHorizontalSquared).FirstOrDefault();
+                    if (man != null)
+                    {
+                        defenders.Remove(man);
+                        man.GetLord()?.RemovePawn(man);
+                        lord.AddPawn(man);
+                        taken++;
+                        continue;
+                    }
+                    // repli : le servant vanilla, comme sans le mod
+                    Pawn p = PawnGenerator.GeneratePawn(sv.request);
+                    IntVec3 c = sv.cell.Standable(map) && sv.cell.GetFirstPawn(map) == null ? sv.cell : CellFinder.RandomClosewalkCellNear(sv.cell, map, 3);
+                    GenSpawn.Spawn(p, c, map);
+                    lord.AddPawn(p);
+                    fallback++;
+                }
+                catch (Exception e) { Log.Warning("[Hardened Raids] mortar crew: " + e.Message); }
+            }
+            HRLog.Msg($"colonie {ctx.faction.Name} : {ctx.servants.Count} mortier(s), {taken} servi(s) par des défenseurs, {fallback} servant(s) vanilla");
         }
     }
 
@@ -416,6 +492,7 @@ namespace HardenedRaids
                 // défenseurs : pawns humains de la faction, valides, dans un lord de défense de base
                 List<Pawn> defenders = __result.mapPawns.SpawnedPawnsInFaction(ctx.faction)
                     .Where(p => p.RaceProps.Humanlike && !p.Downed && !p.Dead && IsDefendLord(p.GetLord()?.LordJob)).ToList();
+                Patch_SettlementMortarServant.AfterGeneration(ctx, defenders);
                 SettlementTurrets.AfterGeneration(ctx, defenders);
                 if (HRSettings.SettlementVehicles && VehicleGate.Active && ctx.faction.def.techLevel >= TechLevel.Industrial
                     && ctx.tierX >= HRSettings.VehicleMinTier)
