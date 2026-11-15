@@ -165,7 +165,9 @@ namespace HardenedRaids
             if (!HRSettings.EnableTiers) return false;
             if (GenContext.NonCombat > 0) return false;   // cadavres d'une colonie abandonnée, d'un appel de détresse…
             Faction f = parms.faction;
-            if (f == null || f.IsPlayer || !f.def.humanlikeFaction || !f.HostileTo(Faction.OfPlayer)) return false;
+            if (f == null || f.IsPlayer || !f.def.humanlikeFaction) return false;
+            // D1 : colonie neutre / alliée attaquée, carte générée avant le passage à l'hostilité → traitée comme hostile
+            if (!f.HostileTo(Faction.OfPlayer) && !SettlementDefense.TreatAsHostile(parms)) return false;
             if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return false;
             return true;
         }
