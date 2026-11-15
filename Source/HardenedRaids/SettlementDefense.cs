@@ -54,7 +54,8 @@ namespace HardenedRaids
 
         // Un contexte par génération de carte active (pile) : chaque MapGenerator.GenerateMap part sans contexte, celui de la
         // génération englobante est remis à la fin (finalizer, même sur exception). Hors génération : jamais de contexte.
-        // La pile est bornée par l'imbrication des générations et vidée au changement de partie.
+        // La pile est bornée par l'imbrication des générations ; tout (contextes, carte, Game) est lâché au changement de
+        // partie (R4 : Reset, appelé par MemoryUtility.ClearAllMapsAndWorld et Game.FinalizeInit).
         private static Context current;
         private static readonly List<Context> outer = new List<Context>();
         private static int depth;
@@ -70,6 +71,15 @@ namespace HardenedRaids
             outer.Add(current);
             current = null;
             depth++;
+        }
+
+        /// <summary>Changement / chargement de partie, retour au menu : aucune référence à l'ancienne Game ni à ses cartes.</summary>
+        public static void Reset()
+        {
+            current = null;
+            outer.Clear();
+            depth = 0;
+            stackGame = null;
         }
 
         /// <summary>Fin de MapGenerator.GenerateMap (toujours appelé) : contexte de cette génération jeté, l'englobant remis.</summary>
@@ -478,6 +488,19 @@ namespace HardenedRaids
 
         public static void Prefix(out int __state) => SettlementTurrets.Prefix(out __state);
         public static void Postfix(int __state) => SettlementTurrets.Postfix(__state);
+    }
+
+    // ---------------------------------------------------------------- R4 : rien ne survit à la partie précédente
+    [HarmonyPatch(typeof(Verse.Profile.MemoryUtility), nameof(Verse.Profile.MemoryUtility.ClearAllMapsAndWorld))]
+    public static class Patch_SettlementDefenseClear
+    {
+        public static void Prefix() => SettlementDefense.Reset();
+    }
+
+    [HarmonyPatch(typeof(Game), nameof(Game.FinalizeInit))]
+    public static class Patch_SettlementDefenseClearInit
+    {
+        public static void Postfix() => SettlementDefense.Reset();
     }
 
     // ---------------------------------------------------------------- fin de génération de la carte
