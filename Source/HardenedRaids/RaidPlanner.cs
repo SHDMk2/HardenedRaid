@@ -374,6 +374,13 @@ namespace HardenedRaids
                 if (given >= plan.total) break;
                 if (counts[i] < max) { counts[i]++; given++; }
             }
+            // reste des vagues bloquées au plafond : aux autres, tour à tour (w × max ≥ total, tout est placé)
+            for (bool moved = true; given < plan.total && moved;)
+            {
+                moved = false;
+                for (int i = 0; i < w && given < plan.total; i++)
+                    if (counts[i] < max) { counts[i]++; given++; moved = true; }
+            }
             return counts;
         }
 

@@ -158,10 +158,13 @@ namespace HardenedRaids
                 remaining -= n;
                 wp.next.Add(new WavePlanItem
                 {
-                    count = n, share = n / (float)plan.total,
+                    count = n,
                     vehicles = vehicles != null && vehicles.Count >= i && vehicles[i - 1].Count > 0 ? vehicles[i - 1] : null,
                 });
             }
+            // sécurité : un reste non placé par les effectifs prévus va aux vagues suivantes, tour à tour
+            for (int j = 0; remaining > 0 && wp.next.Count > 0; j = (j + 1) % wp.next.Count) { wp.next[j].count++; remaining--; }
+            foreach (WavePlanItem it in wp.next) it.share = it.count / (float)plan.total;
             return wp;
         }
 
