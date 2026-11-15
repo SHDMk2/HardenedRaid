@@ -16,7 +16,7 @@ namespace HardenedRaids
 {
     /// <summary>
     /// Lot « uncap » : combats hors raid encore plafonnés en amont du plafond de 10 000 (A1, décision D1 « garder le ratio »).
-    /// Chaque courbe points → points qui sature à ou avant 10 000 garde sa valeur vanilla jusqu'à 10 000 (D7), puis est
+    /// Chaque courbe points → points qui sature à ou avant 10 000 garde sa valeur vanilla jusqu'à 10 000 (DU7), puis est
     /// prolongée par la droite passant par l'origine et l'ancre (max(dernier x, 10 000), dernier y) : continue, et le ratio
     /// au plafond vanilla de la menace est conservé. Exemples : combat lointain (10 000 → 2 500, ¼) : 50 000 → 12 500 ;
     /// points de site (5 000 → 1 000, plat jusqu'à 10 000) : 10 000 → 1 000, 50 000 → 5 000.
