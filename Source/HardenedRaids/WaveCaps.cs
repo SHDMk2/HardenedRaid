@@ -13,21 +13,25 @@ namespace HardenedRaids
     /// décoché : DU3 pour les raids, <see cref="OutOfRaidCap"/> hors raid). Le tirage vanilla des pawnkinds
     /// (ChoosePawnGenOptionsByPoints, rien n'est encore généré) est tronqué au plafond. Raid (groupe principal) : le reste
     /// part en vagues différées, chacune avec les points des pawnkinds qu'elle remplace (tolérance de 10 %). Hors raid :
-    /// une vague, plafond strict (× SettlementCapFactor pour les défenseurs d'une colonie : DU2), surplus perdu.
+    /// une vague, plafond strict (× SettlementCapFactor pour les défenseurs d'une colonie : DU2), surplus perdu ; sauf les
+    /// entités d'Anomaly (DU13), dont le surplus part en vagues propres (<see cref="EntityWaves"/>).
     /// </summary>
     public static class VanillaWaveCap
     {
         private static PawnGroupMakerParms armed;
         private static RaidFrame armedFrame;
         private static int armedCap;
+        private static Map armedEntityMap;
 
         /// <param name="frame">cadre du raid si c'est son groupe principal (vagues possibles), sinon null (simple troncature).</param>
-        public static bool Arm(PawnGroupMakerParms parms, RaidFrame frame, int cap)
+        /// <param name="entityMap">groupe d'entités hors raid (DU13) : carte de ses vagues différées, null = surplus perdu.</param>
+        public static bool Arm(PawnGroupMakerParms parms, RaidFrame frame, int cap, Map entityMap = null)
         {
             if (parms == null || cap <= 0) return false;
             armed = parms;
             armedFrame = frame;
             armedCap = cap;
+            armedEntityMap = frame == null ? entityMap : null;
             return true;
         }
 
@@ -35,6 +39,7 @@ namespace HardenedRaids
         {
             armed = null;
             armedFrame = null;
+            armedEntityMap = null;
         }
 
         /// <summary>
@@ -61,17 +66,19 @@ namespace HardenedRaids
             if (armed == null || groupParms != armed || result == null) return;
             RaidFrame frame = armedFrame;
             int cap = armedCap;
+            Map entityMap = armedEntityMap;
             Disarm();   // une seule fois : les tirages imbriqués éventuels ne sont pas concernés
             List<PawnGenOptionWithXenotype> list = result as List<PawnGenOptionWithXenotype> ?? result.ToList();
             int n = list.Count;
             float totalCost = list.Sum(o => o.Cost);
             bool canWave = frame != null && frame.Wave == null && !frame.DebugTest && frame.Parms != null && totalCost > 0f;
+            bool entityWave = entityMap != null && totalCost > 0f;   // entités hors raid : vagues propres (DU13)
             // comme le plan Hardened (RaidPlan.Make) : tolérance de 10 % dans un raid (pas de mini-vague) ; hors raid
             // (colonie ×2 : DU2, autres groupes ×1) plafond strict, au pawn près
             if (frame != null ? n <= cap * 1.1f : n <= cap) return;
             int waves = Mathf.CeilToInt(n / (float)cap);
             // vagues égales ; sans vagues (hors raid, vague 2+), on garde tout le plafond
-            int keep = canWave ? Mathf.CeilToInt(n / (float)waves) : cap;
+            int keep = canWave || entityWave ? Mathf.CeilToInt(n / (float)waves) : cap;
             // le chef reste dans la première vague
             List<PawnGenOptionWithXenotype> ordered = list.OrderByDescending(o => o.Option.kind.factionLeader).ToList();
             List<PawnGenOptionWithXenotype> kept = ordered.Take(keep).ToList();
@@ -79,7 +86,12 @@ namespace HardenedRaids
             result = kept;
 
             HRLog.Msg($"génération vanilla plafonnée ({groupParms.faction?.Name}, {groupParms.points:F0} pts) : {kept.Count}/{n} pawns"
-                      + (canWave ? $", {rest.Count} en {waves - 1} vague(s) différée(s)." : ", le reste est abandonné."));
+                      + (canWave || entityWave ? $", {rest.Count} en {waves - 1} vague(s) différée(s)." : ", le reste est abandonné."));
+            if (entityWave)
+            {
+                EntityWaves.Schedule(groupParms, entityMap, rest, keep, totalCost, n, kept.Count);
+                return;
+            }
             if (!canWave) return;
             var wp = new WavePlan { total = n, waves = waves, tierX = -1f, vanilla = true };
             for (int i = 0; i < rest.Count; i += keep)

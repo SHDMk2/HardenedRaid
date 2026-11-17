@@ -38,6 +38,7 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | `RaidContext.cs` | one context per raid (stack), safe for nested raids; planned waves and vehicles of the main group |
 | `WaveCaps.cs` | per-wave cap of the vanilla fallback, of human raids with tiers disabled and of non-human raids (mechanoids…) |
 | `InfestationWaves.cs` | infestations: hive cap per wave, extra hives dig in later |
+| `EntityWaves.cs` | Anomaly entity groups outside raids (sightstealers, gorehulks…): non-human cap per wave, extra entities walk in later in waves (or are discarded, setting), entity incidents rarer when the threat exceeds one wave |
 | `PawnGenFixes.cs` | generation depth (relatives keep vanilla gear), redressed world pawns (implants, prostheses), corpse groups excluded, previews (`GeneratePawnKindsExample`) |
 | `EventPatches.cs` | manhunter packs (cap = low-tech wave cap, species weight), animal events rarer when the threat exceeds what they can spend |
 | `MechClusters.cs` | mech clusters: budget per cluster, split / delayed clusters (at most 10 per event, delayed ones retried for a day), size cap, linear mech placement, fast position search |

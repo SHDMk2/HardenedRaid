@@ -98,8 +98,15 @@ namespace HardenedRaids
             // attaquée : DU1) : une vague au plafond (×SettlementCapFactor pour une colonie, DU2), le surplus est perdu
             else if (!main)
             {
-                int cap = VanillaWaveCap.OutOfRaidCap(parms);
-                if (cap > 0) __state = VanillaWaveCap.Arm(parms, null, cap);
+                // entités d'Anomaly hors raid (sightstealers, gorehulks…) : plafond des non-humains, surplus en vagues
+                // différées ou perdu selon EntityWaves (DU13)
+                if (EntityWaves.IsEntityGroup(parms))
+                    __state = VanillaWaveCap.Arm(parms, null, VanillaWaveCap.NonHumanCap, EntityWaves.WaveMap(parms));
+                else
+                {
+                    int cap = VanillaWaveCap.OutOfRaidCap(parms);
+                    if (cap > 0) __state = VanillaWaveCap.Arm(parms, null, cap);
+                }
             }
             return true;
         }

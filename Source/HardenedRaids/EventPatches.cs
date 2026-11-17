@@ -136,7 +136,7 @@ namespace HardenedRaids
     }
 
     /// <summary>
-    /// Events animaux plus rares quand la menace dépasse ce qu'ils peuvent dépenser :
+    /// Events animaux (et incidents d'entités d'Anomaly, DU13) plus rares quand la menace dépasse ce qu'ils peuvent dépenser :
     /// chance × (points absorbables ÷ points de la colonie), plancher réglable (jamais supprimés).
     /// </summary>
     [HarmonyPatch(typeof(StorytellerComp), "IncidentChanceFinal")]
@@ -149,7 +149,11 @@ namespace HardenedRaids
         private static float globalMaxPower = -1f;
 
         /// <summary>Vidé à chaque chargement / nouvelle partie (Game.FinalizeInit).</summary>
-        public static void ClearCache() => maxPowerByMap = new ConditionalWeakTable<Map, PowerEntry>();
+        public static void ClearCache()
+        {
+            maxPowerByMap = new ConditionalWeakTable<Map, PowerEntry>();
+            EntityWaves.ClearCache();
+        }
 
         public static void Postfix(IncidentDef def, IIncidentTarget target, ref float __result)
         {
@@ -157,8 +161,12 @@ namespace HardenedRaids
             try
             {
                 float capacity = Capacity(def.Worker, map);
-                if (capacity < 0f) return;
+                bool entity = capacity < 0f && EntityWaves.IsEntityIncident(def.Worker);
+                if (capacity < 0f && !entity) return;
                 float points = StorytellerUtility.DefaultThreatPointsNow(map);
+                // incidents d'entités d'Anomaly (DU13) : ce qu'une vague peut dépenser
+                if (entity) capacity = EntityWaves.IncidentCapacity(def.Worker, points);
+                if (capacity < 0f) return;
                 if (points <= capacity) return;
                 __result *= Mathf.Clamp(capacity / points, HRSettings.AnimalRarityFloor, 1f);
             }

@@ -27,6 +27,7 @@ namespace HardenedRaids
 
         // --- Autres events ---
         public static float AnimalRarityFloor = 0.10f;       // chance minimale des events animaux quand la menace les dépasse
+        public static bool EntityOverflowWaves = true;               // entités d'Anomaly au-delà du plafond : vagues différées (sinon perdues)
         public static float ClusterTurretCostFactor = 3f;    // prix des tourelles de grappe mécanoïde
 
         // --- lot cluster ---
@@ -84,6 +85,7 @@ namespace HardenedRaids
             Scribe_Values.Look(ref WaveDelayHoursMin, "WaveDelayHoursMin", 2f);
             Scribe_Values.Look(ref WaveDelayHoursMax, "WaveDelayHoursMax", 6f);
             Scribe_Values.Look(ref AnimalRarityFloor, "AnimalRarityFloor", 0.10f);
+            Scribe_Values.Look(ref EntityOverflowWaves, "EntityWaves", true);
             Scribe_Values.Look(ref ClusterTurretCostFactor, "ClusterTurretCostFactor", 3f);
             // --- lot cluster ---
             Scribe_Values.Look(ref MechClusterBudget, "MechClusterBudget", 20000f);
@@ -188,6 +190,7 @@ namespace HardenedRaids
             l.Label(Strings.T("AnimalCap", AnimalCaps.MaxAnimals));
             AnimalRarityFloor = Mathf.Round(l.SliderLabeled(Strings.T("AnimalRarity", AnimalRarityFloor.ToString("P0")), AnimalRarityFloor, 0f, 1f, 0.5f,
                 Strings.T("AnimalRarityTip")) * 20f) / 20f;
+            l.CheckboxLabeled(Strings.T("EntityWaves"), ref EntityOverflowWaves, Strings.T("EntityWavesTip"));
             ClusterTurretCostFactor = Mathf.Round(l.SliderLabeled(Strings.T("ClusterTurrets", ClusterTurretCostFactor.ToString("F2")), ClusterTurretCostFactor, 1f, 6f, 0.5f,
                 Strings.T("ClusterTurretsTip")) * 4f) / 4f;
             // --- lot cluster ---

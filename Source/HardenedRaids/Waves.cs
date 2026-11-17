@@ -45,6 +45,9 @@ namespace HardenedRaids
         public int postponed;
         /// <summary>Coût (points) des véhicules prévus, déduit de l'infanterie de la vague (0 = inconnu, save v1.0 : rien à rendre).</summary>
         public float vehicleCost;
+        /// <summary>Vague d'entités d'Anomaly (DU13) : type de groupe à régénérer (null si Anomaly retiré : vague annulée).</summary>
+        public PawnGroupKindDef groupKind;
+        public bool entity;
 
         /// <summary>Annulée par un signal pendant le traitement des vagues (non sauvegardé).</summary>
         public bool cancelled;
@@ -114,6 +117,8 @@ namespace HardenedRaids
             Scribe_Defs.Look(ref incident, "incident");
             Scribe_Values.Look(ref postponed, "postponed", 0);
             Scribe_Values.Look(ref vehicleCost, "vehicleCost", 0f);
+            Scribe_Defs.Look(ref groupKind, "groupKind");
+            Scribe_Values.Look(ref entity, "entity", false);
             if (Scribe.mode == LoadSaveMode.PostLoadInit)
                 vehicles?.RemoveAll(v => v.NullOrEmpty());
         }
@@ -358,6 +363,11 @@ namespace HardenedRaids
             if (w.IsInfestation)
             {
                 InfestationWaves.Fire(w, quest);
+                return;
+            }
+            if (w.entity)
+            {
+                EntityWaves.Fire(w);
                 return;
             }
             if (w.faction == null || w.faction.defeated || !w.faction.HostileTo(Faction.OfPlayer))

@@ -53,8 +53,10 @@ namespace HardenedRaids
 
             ["SecEvents"] = "<b>Other events</b>",
             ["AnimalCap"] = "Max animals per manhunter pack: {0} (neolithic wave cap, never below vanilla's 100)",
-            ["AnimalRarity"] = "Animal events minimum chance: {0}",
-            ["AnimalRarityTip"] = "Manhunter packs (and Anomaly frenzied animals), mass animal insanity and the Vanilla Events Expanded single manhunter animal can't spend unlimited points. When the threat exceeds what they can use, their chance drops in proportion (points they can use ÷ colony points), down to this floor. Never removed.",
+            ["AnimalRarity"] = "Animal / entity events minimum chance: {0}",
+            ["AnimalRarityTip"] = "Manhunter packs (and Anomaly frenzied animals), mass animal insanity, the Vanilla Events Expanded single manhunter animal and Anomaly entity attacks (sightstealers, gorehulks, devourers, chimeras, shamblers) can't spend unlimited points. When the threat exceeds what they can use (in one wave for entities), their chance drops in proportion (points they can use ÷ colony points), down to this floor. Never removed.",
+            ["EntityWaves"] = "Anomaly entities: extra entities in waves",
+            ["EntityWavesTip"] = "A group of Anomaly entities (sightstealers, gorehulks, devourers, chimeras, fleshbeasts, noctols…) is capped at the max per wave for neolithic/medieval raiders. Checked: the extra entities walk in later from the map edge, in waves (same delays as raid waves). Unchecked: the extra entities are discarded. Void awakening metalhorror defenders never come in waves. Shamblers are already limited to 200 by the game.",
             ["ClusterTurrets"] = "Mech cluster turret price: ×{0}",
             ["ClusterTurretsTip"] = "Cluster turrets are cheap in vanilla (mini-turret = a scavenger). Higher = fewer turrets for the same points. The cluster also grows with points.",
             // --- lot cluster ---
@@ -99,6 +101,9 @@ namespace HardenedRaids
             ["MsgWaves"] = "Hardened Raids: {0} attacks in {1} waves ({2} raiders in total). Next wave in {3}.",
             // --- lot waves ---
             ["MsgInfestationWaves"] = "Hardened Raids: infestation of {0} hives: {1} now, the rest will dig through in {2} more wave(s), {3} apart.",
+            ["MsgEntityWaves"] = "Hardened Raids: group of {0} entities: {1} in the first wave, the rest will come in {2} more wave(s), {3} apart.",
+            ["LetterEntityWave"] = "Entity wave",
+            ["LetterEntityWaveText"] = "Wave {0}/{1}: {2} more entities are coming from the edge of the map.",
             ["MsgSupportTeam"] = "A support team from {0} ({1} men) is setting up firing positions.",
             ["MsgTruckTurret"] = "{0} is unloading a {1} in front of its trucks.",
 
@@ -152,8 +157,10 @@ namespace HardenedRaids
 
             ["SecEvents"] = "<b>Autres events</b>",
             ["AnimalCap"] = "Bêtes max par meute enragée : {0} (plafond des vagues néolithiques, jamais moins que les 100 de vanilla)",
-            ["AnimalRarity"] = "Chance minimale des events animaux : {0}",
-            ["AnimalRarityTip"] = "Les meutes enragées (et les bêtes frénétiques d'Anomaly), la folie animale de masse et la bête enragée seule de Vanilla Events Expanded ne peuvent pas dépenser des points sans limite. Quand la menace dépasse ce qu'elles peuvent utiliser, leur chance baisse d'autant (points utilisables ÷ points de la colonie), jusqu'à ce plancher. Jamais supprimées.",
+            ["AnimalRarity"] = "Chance minimale des events animaux / entités : {0}",
+            ["AnimalRarityTip"] = "Les meutes enragées (et les bêtes frénétiques d'Anomaly), la folie animale de masse, la bête enragée seule de Vanilla Events Expanded et les attaques d'entités d'Anomaly (sightstealers, gorehulks, dévoreurs, chimères, shamblers) ne peuvent pas dépenser des points sans limite. Quand la menace dépasse ce qu'elles peuvent utiliser (en une vague pour les entités), leur chance baisse d'autant (points utilisables ÷ points de la colonie), jusqu'à ce plancher. Jamais supprimées.",
+            ["EntityWaves"] = "Entités d'Anomaly : surplus en vagues",
+            ["EntityWavesTip"] = "Un groupe d'entités d'Anomaly (sightstealers, gorehulks, dévoreurs, chimères, chairbêtes, noctols…) est plafonné au maximum par vague des raiders néolithiques/médiévaux. Coché : les entités en trop arrivent plus tard par le bord de la carte, en vagues (mêmes délais que les vagues de raid). Décoché : les entités en trop sont perdues. Les métalhorreurs qui défendent l'Éveil du Vide ne viennent jamais en vagues. Les shamblers sont déjà limités à 200 par le jeu.",
             ["ClusterTurrets"] = "Prix des tourelles de grappe mécanoïde : ×{0}",
             ["ClusterTurretsTip"] = "Les tourelles de grappe sont bon marché en vanilla (mini-tourelle = un scavenger). Plus haut = moins de tourelles pour les mêmes points. La grappe grandit aussi avec les points.",
             // --- lot cluster ---
@@ -198,6 +205,9 @@ namespace HardenedRaids
             ["MsgWaves"] = "Hardened Raids : {0} attaque en {1} vagues ({2} raiders au total). Prochaine vague dans {3}.",
             // --- lot waves ---
             ["MsgInfestationWaves"] = "Hardened Raids : infestation de {0} ruches : {1} maintenant, les autres creuseront en {2} vague(s) de plus, à {3} d'intervalle.",
+            ["MsgEntityWaves"] = "Hardened Raids : groupe de {0} entités : {1} dans la première vague, les autres viendront en {2} vague(s) de plus, à {3} d'intervalle.",
+            ["LetterEntityWave"] = "Vague d'entités",
+            ["LetterEntityWaveText"] = "Vague {0}/{1} : {2} entités de plus arrivent par le bord de la carte.",
             ["MsgSupportTeam"] = "Une équipe d'appui de {0} ({1} hommes) installe des positions de tir.",
             ["MsgTruckTurret"] = "{0} décharge un(e) {1} devant ses camions.",
 
