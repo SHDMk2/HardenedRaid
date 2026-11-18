@@ -35,6 +35,9 @@ namespace HardenedRaids
         /// <summary>Camp d'une équipe d'appui (pendant LordToil_Siege.Init).</summary>
         public static bool Support;
 
+        /// <summary>Toil de siège dont on pose le camp (pendant LordToil_Siege.Init).</summary>
+        public static LordToil_Siege Toil;
+
         /// <summary>À appeler par qui crée un LordJob_Siege dont le palier est connu (raid, équipe d'appui).</summary>
         public static void Register(Verse.AI.Group.LordJob job, float tierX)
         {
@@ -64,6 +67,7 @@ namespace HardenedRaids
             SiegeTier.Current = SiegeTier.For(l?.LordJob);
             SiegeTier.Raiders = l?.ownedPawns.Count ?? 0;
             SiegeTier.Support = l?.Map != null && MapComponent_HostileTurretSupply.For(l.Map)?.IsSupportLord(l) == true;
+            SiegeTier.Toil = __instance;
         }
 
         public static void Finalizer()
@@ -71,6 +75,7 @@ namespace HardenedRaids
             SiegeTier.Current = -1f;
             SiegeTier.Raiders = 0;
             SiegeTier.Support = false;
+            SiegeTier.Toil = null;
         }
     }
 
@@ -301,17 +306,35 @@ namespace HardenedRaids
         public static IntVec3 GunnerCell(Blueprint_Build b, Map map) =>
             b.def.entityDefToBuild is ThingDef d && d.hasInteractionCell ? ThingUtility.InteractionCellWhenAt(d, b.Position, b.Rotation, map) : IntVec3.Invalid;
 
-        /// <summary>La cible du siège : le bâtiment du joueur le plus proche du camp.</summary>
+        /// <summary>
+        /// La cible du siège : le bâtiment de combat du joueur le plus proche (tourelles, bâtiments que vanilla
+        /// traite comme cibles), pas un câble ou un mur isolé ; à défaut, le barycentre des colons et de la zone Home.
+        /// </summary>
         public static IntVec3 ThreatTarget(Map map, IntVec3 from)
         {
             Building best = null;
             float bestD = float.MaxValue;
-            foreach (Building b in map.listerBuildings.allBuildingsColonist)
+            foreach (Building b in map.listerBuildings.allBuildingsColonistCombatTargets)
             {
+                if (b == null || !b.Spawned) continue;
                 float d = (b.Position - from).LengthHorizontalSquared;
                 if (d < bestD) { bestD = d; best = b; }
             }
-            return best?.Position ?? map.Center;
+            if (best != null) return best.Position;
+            var parts = new List<Vector2>();
+            List<Pawn> colonists = map.mapPawns.FreeColonistsSpawned;
+            if (colonists.Count > 0) parts.Add(new Vector2((float)colonists.Average(p => p.Position.x), (float)colonists.Average(p => p.Position.z)));
+            Area home = map.areaManager?.Home;
+            if (home != null && home.TrueCount > 0)
+            {
+                long sx = 0, sz = 0;
+                int n = 0;
+                foreach (IntVec3 c in home.ActiveCells) { sx += c.x; sz += c.z; n++; }
+                if (n > 0) parts.Add(new Vector2(sx / (float)n, sz / (float)n));
+            }
+            if (parts.Count == 0) return map.Center;
+            Vector2 m = new Vector2(parts.Average(v => v.x), parts.Average(v => v.y));
+            return new IntVec3(Mathf.RoundToInt(m.x), 0, Mathf.RoundToInt(m.y)).ClampInsideMap(map);
         }
 
     }

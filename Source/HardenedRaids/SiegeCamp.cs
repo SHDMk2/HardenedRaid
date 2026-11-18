@@ -389,12 +389,118 @@ namespace HardenedRaids
             if (groups.Count > 0) DropPodUtility.DropThingGroupsNear(at, map, groups);
         }
 
-        // ------------------------------------------------------------ ravitaillement
-        /// <summary>Point de livraison des vivres, munitions et matériaux (le drapeau pour l'instant).</summary>
-        public static IntVec3 SupplySpot(Map map, Faction f, IntVec3 center, List<Thing> pieces) => center;
+        // ------------------------------------------------------------ ravitaillement (I)
+        /// <summary>
+        /// Point de livraison des vivres, obus et matériaux : à l'arrière, sur le flanc le plus éloigné des pièces
+        /// explosives, à moins de 11,5 cases du drapeau (capsules dans la limite de 16 des bâtisseurs, et dans les
+        /// 20 cases où vanilla compte les réserves avant d'en relivrer). Déduit des pièces du camp.
+        /// </summary>
+        public static IntVec3 SupplySpot(Map map, Faction f, IntVec3 center, List<Thing> pieces)
+        {
+            if (map == null || pieces == null || pieces.Count == 0) return center;
+            CampFrame fr = FrameOf(map, center, pieces);
+            var boom = new List<Vector3>();
+            var taken = new HashSet<IntVec3>();
+            foreach (Thing t in pieces)
+            {
+                ThingDef d = Built(t);
+                if (d == null) continue;
+                foreach (IntVec3 c in Body(t)) taken.Add(c);
+                if (d.hasInteractionCell) taken.Add(ThingUtility.InteractionCellWhenAt(d, t.Position, t.Rotation, map));
+                if (Explosive(d)) boom.Add(GenThing.TrueCenter(t.Position, t.Rotation, d.size, 0f));
+            }
+            IntVec3 best = IntVec3.Invalid;
+            float bestScore = float.MinValue;
+            foreach (int side in new[] { 1, -1 })
+                for (int a = -8; a <= -2; a++)
+                    for (int al = 8; al <= 11; al++)
+                    {
+                        IntVec3 c = fr.At(a, side * al);
+                        if (!c.InBounds(map) || !c.InHorDistOf(center, 11.5f) || taken.Contains(c) || !c.Standable(map) || c.Roofed(map)) continue;
+                        Vector3 v = c.ToVector3Shifted();
+                        float near = 15f;
+                        foreach (Vector3 b in boom) near = Mathf.Min(near, (b - v).MagnitudeHorizontal());
+                        float score = near - 0.3f * Mathf.Abs(a + 5) - 0.3f * Mathf.Abs(al - 10);
+                        if (score > bestScore) { bestScore = score; best = c; }
+                    }
+            return best.IsValid ? best : center;
+        }
 
-        /// <summary>Cases gardées libres autour du point de livraison.</summary>
-        public static IEnumerable<IntVec3> SupplyZone(Map map, Faction f, IntVec3 center, List<Thing> pieces) => Enumerable.Empty<IntVec3>();
+        public static IntVec3 SupplySpot(LordToil_Siege toil)
+        {
+            Lord lord = toil.lord;
+            if (lord?.Map == null || lord.faction == null || toil.data is not LordToilData_Siege data) return toil.FlagLoc;
+            IntVec3 center = data.siegeCenter;
+            return SupplySpot(lord.Map, lord.faction, center, CampThings(lord.Map, lord.faction, center).Where(t => IsPiece(Built(t))).ToList());
+        }
+
+        /// <summary>Cases gardées libres (pas de couverture) autour du point de livraison.</summary>
+        public static IEnumerable<IntVec3> SupplyZone(Map map, Faction f, IntVec3 center, List<Thing> pieces)
+        {
+            IntVec3 spot = SupplySpot(map, f, center, pieces);
+            if (spot == center) yield break;
+            foreach (IntVec3 c in GenRadial.RadialCellsAround(spot, 2f, true)) yield return c;
+        }
+
+        // ------------------------------------------------------------ emplacement (G)
+        /// <summary>
+        /// Emplacement du camp : vanilla (RCellFinder.FindSiegePositionFrom) avec un validateur — zone dégagée sur
+        /// le rayon du plan (85 % des cases sans toit, sol lourd, ni eau ni marais, ni roche / mur ; le cœur entier),
+        /// et à la plus grande portée minimale de l'artillerie possible + 5 de toute cible (colons, bâtiments de
+        /// combat). Puis sans la distance. Échec : found = false (vanilla rend alors le point d'entrée).
+        /// </summary>
+        public static IntVec3 FindCampSpot(IntVec3 from, Map map, Faction f, float x, out bool found)
+        {
+            found = false;
+            if (!from.IsValid || map == null || f == null) return from;
+            float minRange = Patch_SiegeBlueprints.MinRange(ThingDefOf.Turret_Mortar);
+            if (x >= 2f) minRange = Mathf.Max(minRange, Patch_SiegeBlueprints.ArtilleryDefsFor(f).Select(Patch_SiegeBlueprints.MinRange).DefaultIfEmpty(0f).Max());
+            float minDist = minRange + 5f;
+            var colony = new List<IntVec3>();
+            foreach (Pawn p in map.mapPawns.FreeColonistsSpawned) colony.Add(p.Position);
+            foreach (Building b in map.listerBuildings.allBuildingsColonistCombatTargets) colony.Add(b.Position);
+            float sq = minDist * minDist;
+            bool FarEnough(IntVec3 c) => colony.All(p => (p - c).LengthHorizontalSquared >= sq);
+
+            IntVec3 s = RCellFinder.FindSiegePositionFrom(from, map, errorOnFail: false, validator: c => FarEnough(c) && SiteOk(map, c));
+            if (s != from)
+            {
+                found = true;
+                HRLog.Msg($"siège : camp en {s} (zone dégagée, à {minDist:F0}+ cases de la colonie).");
+                return s;
+            }
+            s = RCellFinder.FindSiegePositionFrom(from, map, errorOnFail: false, validator: c => SiteOk(map, c));
+            if (s != from)
+            {
+                found = true;
+                HRLog.Msg($"siège : camp en {s} (zone dégagée, plus près que {minDist:F0} cases : pièces choisies à portée).");
+                return s;
+            }
+            HRLog.Msg($"siège : aucune zone dégagée depuis {from}.");
+            return from;
+        }
+
+        private static readonly int SiteCells = GenRadial.NumCellsInRadius(13f);
+
+        /// <summary>Zone du plan dégagée autour de c (une case sur deux au-delà du cœur, pour le coût).</summary>
+        public static bool SiteOk(Map map, IntVec3 c)
+        {
+            int bad = 0, n = 0;
+            for (int i = 0; i < SiteCells; i++)
+            {
+                IntVec3 d = GenRadial.RadialPattern[i];
+                bool core = d.LengthHorizontalSquared <= 9;
+                if (!core && ((d.x + d.z) & 1) != 0) continue;
+                IntVec3 p = c + d;
+                n++;
+                bool ok = p.InBounds(map) && !p.Roofed(map) && !p.GetTerrain(map).IsWater
+                          && p.SupportsStructureType(map, TerrainAffordanceDefOf.Heavy) && !p.Impassable(map);
+                if (ok) continue;
+                if (core) return false;
+                bad++;
+            }
+            return bad <= n * 0.15f;
+        }
     }
 
     /// <summary>Couverture du camp posée après les pièces : vérifié toutes les 500 ticks (décalé du recalcul des duties vanilla).</summary>
@@ -407,6 +513,88 @@ namespace HardenedRaids
             if (lord == null || lord.ticksInToil < 500 || lord.ticksInToil % 500 != 250 || !SiegeCamp.Enhanced(lord)) return;
             try { SiegeCamp.TryPlaceCover(__instance); }
             catch (Exception e) { Log.WarningOnce("[Hardened Raids] siege cover: " + e, 0x48524356); }
+        }
+    }
+}
+
+namespace HardenedRaids
+{
+    /// <summary>Livraison initiale (matériaux, obus, repas) au point de ravitaillement du camp, pas au drapeau.</summary>
+    [HarmonyPatch(typeof(LordToil_Siege), nameof(LordToil_Siege.Init))]
+    public static class Patch_SiegeInitSupplies
+    {
+        private static readonly System.Reflection.MethodInfo drop = AccessTools.Method(typeof(DropPodUtility), nameof(DropPodUtility.DropThingGroupsNear));
+        private static readonly System.Reflection.MethodInfo ours = AccessTools.Method(typeof(Patch_SiegeInitSupplies), nameof(DropNear));
+
+        public static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> code)
+        {
+            bool done = false;
+            foreach (CodeInstruction ci in code)
+            {
+                if (!done && drop != null && ci.Calls(drop)) { ci.operand = ours; done = true; }
+                yield return ci;
+            }
+            if (!done) Log.Warning("[Hardened Raids] siege supplies: DropThingGroupsNear not found in LordToil_Siege.Init, drop spot left vanilla.");
+        }
+
+        public static void DropNear(IntVec3 dropCenter, Map map, List<List<Thing>> thingsGroups, int openDelay, bool instaDrop, bool leaveSlag,
+                                    bool canRoofPunch, bool forbid, bool allowFogged, bool canTransfer, Faction faction)
+        {
+            try
+            {
+                LordToil_Siege toil = SiegeTier.Toil;
+                if (toil?.lord != null && toil.Map == map && SiegeCamp.Enhanced(toil.lord)) dropCenter = SiegeCamp.SupplySpot(toil);
+            }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] siege supply spot: " + e, 0x48525353); }
+            DropPodUtility.DropThingGroupsNear(dropCenter, map, thingsGroups, openDelay, instaDrop, leaveSlag, canRoofPunch, forbid, allowFogged, canTransfer, faction);
+        }
+    }
+
+    /// <summary>Réapprovisionnement (obus, repas, barils ; obus CE) au point de ravitaillement du camp.</summary>
+    [HarmonyPatch(typeof(LordToil_Siege), "DropSupplies")]
+    public static class Patch_SiegeDropSupplies
+    {
+        public static bool Prefix(LordToil_Siege __instance, ThingDef thingDef, int count)
+        {
+            if (thingDef == null || !SiegeCamp.Enhanced(__instance.lord)) return true;
+            try
+            {
+                Thing t = ThingMaker.MakeThing(thingDef);
+                t.stackCount = count;
+                DropPodUtility.DropThingsNear(SiegeCamp.SupplySpot(__instance), __instance.Map, new List<Thing> { t });
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.WarningOnce("[Hardened Raids] siege resupply: " + e, 0x48525355);
+                return true;
+            }
+        }
+    }
+
+    /// <summary>Camp de siège à un emplacement dégagé et hors de portée minimale de ses pièces (G).</summary>
+    [HarmonyPatch(typeof(RaidStrategyWorker_Siege), "MakeLordJob")]
+    public static class Patch_SiegeCampSpot
+    {
+        public static bool Prefix(IncidentParms parms, Map map, List<Pawn> pawns, ref Verse.AI.Group.LordJob __result)
+        {
+            if (!HRSettings.SiegeUpgrade || parms?.faction == null || map == null) return true;
+            try
+            {
+                IntVec3 from = parms.spawnCenter.IsValid ? parms.spawnCenter : pawns != null && pawns.Count > 0 ? pawns[0].PositionHeld : IntVec3.Invalid;
+                float x = RaidContext.TierXFor(parms);
+                if (x < 0f) x = Tiers.TierX(parms.faction.def, parms.points);
+                IntVec3 spot = SiegeCamp.FindCampSpot(from, map, parms.faction, x, out bool found);
+                if (!found) return true;   // vanilla (qui finira peut-être au point d'entrée, comme avant)
+                float points = Mathf.Max(60f, parms.points * Rand.Range(0.2f, 0.3f));   // comme vanilla
+                __result = new LordJob_Siege(parms.faction, spot, points);
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Hardened Raids] siege camp spot: " + e);
+                return true;
+            }
         }
     }
 }
