@@ -112,6 +112,8 @@ namespace HardenedRaids
 
         public bool IsRegistered(Building_Turret t) => turrets.Contains(t);
 
+        public bool IsSupportLord(Lord l) => l != null && supportLords.Contains(l);
+
         private static bool Gone(Thing t) => t == null || t.Destroyed;   // Destroyed inclut Discarded
 
         private static bool HostileNpc(Faction f) => f != null && !f.IsPlayer && f.HostileTo(Faction.OfPlayer);
@@ -286,12 +288,15 @@ namespace HardenedRaids
             if (ammo == null) return;
             count = Mathf.Min(count, ammo.stackLimit * 2);
             IntVec3 at = t.def.hasInteractionCell ? t.InteractionCell : t.Position;
+            CellRect body = t.OccupiedRect();
+            // à côté du poste, jamais sur la case du servant ni sous la pièce
+            bool Free(IntVec3 c) => c != at && !body.Contains(c);
             while (count > 0)
             {
                 Thing stack = ThingMaker.MakeThing(ammo);
                 stack.stackCount = Mathf.Min(count, ammo.stackLimit);
                 count -= stack.stackCount;
-                if (!GenPlace.TryPlaceThing(stack, at, t.Map, ThingPlaceMode.Near)) break;
+                if (!GenPlace.TryPlaceThing(stack, at, t.Map, ThingPlaceMode.Near, null, Free)) break;
             }
         }
 

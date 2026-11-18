@@ -31,8 +31,9 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | `CECompat.cs` | Combat Extended ammo (reflection, optional) and AI ammo type weights |
 | `Waves.cs` | delayed waves (saved GameComponent; waves of a removed map dropped before saving, vehicle cost returned to the infantry of a wave launched without its vehicles) |
 | `AIPatches.cs` | smart/breach/sapper strategy weights, turret avoid grid, out-of-service turrets |
-| `SiegePatches.cs` | siege camps: modded artillery and turrets (manned or automatic), cover facing the base |
+| `SiegePatches.cs` | siege camps: modded artillery and turrets (manned or automatic, gunner cell kept clear), cover facing the base |
 | `SupportTeams.cs` | support teams (forward camp during an assault) + enemy turret resupply |
+| `TurretManning.cs` | enemy turret crews: one dedicated gunner per built manned piece in siege / support camps (vanilla ManClosestTurret duty), AI may man an already loaded turret without ammo on the ground (vanilla / CE job givers), occupant-only bunkers (Fortifications) left out of the catalogs |
 | `Convoy.cs` | enemy convoy: approach, dismount, truck turrets, fire support, retreat and re-boarding (`Defs/HR_AI.xml`) |
 | `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (with `SettlementVehicles.cs`, the only files touching VF types) |
 | `RaidContext.cs` | one context per raid (stack), safe for nested raids; planned waves and vehicles of the main group |

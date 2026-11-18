@@ -87,8 +87,8 @@ namespace HardenedRaids
             {
                 if (x >= 2f)
                 {
-                    PlaceArtillery(extras, map, faction, x, pieces.Count(b => IsArtillery((ThingDef)b.def.entityDefToBuild)), facing);
-                    PlaceTurrets(extras, map, faction, x, facing);
+                    PlaceArtillery(extras, pieces, map, faction, x, pieces.Count(b => IsArtillery((ThingDef)b.def.entityDefToBuild)), facing);
+                    PlaceTurrets(extras, pieces, map, faction, x, facing);
                 }
                 pieces.AddRange(extras);
                 PlaceCover(extras, map, faction, center, target, x, pieces);
@@ -162,6 +162,7 @@ namespace HardenedRaids
             turretDefs = DefDatabase<ThingDef>.AllDefs.Where(d =>
                 d.building?.turretGunDef != null && !IsArtillery(d) && d.BuildableByPlayer && !NeedsPower(d)
                 && d.size.x <= 5 && d.size.z <= 5 && GunHarms(d.building.turretGunDef)
+                && !TurretManning.RequiresOccupant(d)   // bunkers à occupant : l'IA n'y entre pas, ils ne tireraient jamais
                 && (d.building.buildingTags == null || !d.building.buildingTags.Any(t => t.StartsWith("Artillery")))).ToList();
             // tranchées / sacs de sable des mods (1×1)
             coverDefs = DefDatabase<ThingDef>.AllDefs.Where(d =>
@@ -188,14 +189,49 @@ namespace HardenedRaids
             return defs.TryRandomElementByWeight(d => Mathf.Pow(Mathf.Max(50f, d.BaseMarketValue), exp), out ThingDef r) ? r : null;
         }
 
-        private static bool TryPlace(List<Blueprint_Build> output, ThingDef def, Map map, Faction faction, Rot4 rot)
+        private static bool TryPlace(List<Blueprint_Build> output, List<Blueprint_Build> others, ThingDef def, Map map, Faction faction, Rot4 rot)
         {
             if (!def.rotatable) rot = Rot4.North;
-            var spot = (IntVec3)findArtySpot.Invoke(null, new object[] { def, rot, map });
+            // FindArtySpot vanilla ignore les cases de servant : on retire au sort tant que la case du servant est
+            // bouchée ou que la pièce recouvre celle d'une autre
+            IntVec3 spot = IntVec3.Invalid;
+            for (int i = 0; i < 12 && !spot.IsValid; i++)
+            {
+                var c = (IntVec3)findArtySpot.Invoke(null, new object[] { def, rot, map });
+                if (!c.IsValid) return false;
+                if (InteractionOk(def, c, rot, map, others.Concat(output))) spot = c;
+            }
             if (!spot.IsValid) return false;
             ThingDef stuff = StuffFor(def);
             clearHostilePlans?.Invoke(null, new object[] { spot, rot, def, stuff ?? ThingDefOf.Steel, map });
             output.Add(GenConstruct.PlaceBlueprintForBuild(def, spot, map, rot, faction, stuff));
+            return true;
+        }
+
+        private static CellRect Body(Blueprint_Build b) => GenAdj.OccupiedRect(b.Position, b.Rotation, ((ThingDef)b.def.entityDefToBuild).size);
+
+        /// <summary>Case du servant d'un plan de pièce (Invalid si la pièce n'en a pas).</summary>
+        public static IntVec3 GunnerCell(Blueprint_Build b, Map map) =>
+            b.def.entityDefToBuild is ThingDef d && d.hasInteractionCell ? ThingUtility.InteractionCellWhenAt(d, b.Position, b.Rotation, map) : IntVec3.Invalid;
+
+        /// <summary>Case du servant praticable, hors des autres pièces ; la pièce ne recouvre pas le poste d'une autre.</summary>
+        private static bool InteractionOk(ThingDef def, IntVec3 at, Rot4 rot, Map map, IEnumerable<Blueprint_Build> others)
+        {
+            CellRect mine = GenAdj.OccupiedRect(at, rot, def.size);
+            IntVec3 ic = def.hasInteractionCell ? ThingUtility.InteractionCellWhenAt(def, at, rot, map) : IntVec3.Invalid;
+            if (ic.IsValid)
+            {
+                if (!ic.InBounds(map) || !ic.Walkable(map)) return false;
+                Building e = ic.GetEdifice(map);
+                if (e != null && !mine.Contains(ic) && e.def.passability != Traversability.Standable) return false;
+            }
+            foreach (Blueprint_Build o in others)
+            {
+                if (o == null || o.Destroyed || o.def.entityDefToBuild is not ThingDef) continue;
+                if (ic.IsValid && Body(o).Contains(ic)) return false;
+                IntVec3 oic = GunnerCell(o, map);
+                if (oic.IsValid && mine.Contains(oic)) return false;
+            }
             return true;
         }
 
@@ -213,7 +249,7 @@ namespace HardenedRaids
         }
 
         // ------------------------------------------------------------ placement
-        private static void PlaceArtillery(List<Blueprint_Build> output, Map map, Faction faction, float x, int already, Rot4 facing)
+        private static void PlaceArtillery(List<Blueprint_Build> output, List<Blueprint_Build> others, Map map, Faction faction, float x, int already, Rot4 facing)
         {
             EnsureCatalog();
             List<ThingDef> defs = artilleryDefs.Where(d => TechOk(d, faction)).ToList();
@@ -222,11 +258,11 @@ namespace HardenedRaids
             for (int i = already; i < target; i++)
             {
                 ThingDef def = PickWeighted(defs, x);
-                if (def == null || !TryPlace(output, def, map, faction, facing)) break;
+                if (def == null || !TryPlace(output, others, def, map, faction, facing)) break;
             }
         }
 
-        private static void PlaceTurrets(List<Blueprint_Build> output, Map map, Faction faction, float x, Rot4 facing)
+        private static void PlaceTurrets(List<Blueprint_Build> output, List<Blueprint_Build> others, Map map, Faction faction, float x, Rot4 facing)
         {
             EnsureCatalog();
             List<ThingDef> kit = ChooseKit(turretDefs.Where(d => TechOk(d, faction)).ToList(), x);
@@ -236,7 +272,7 @@ namespace HardenedRaids
             for (int i = 0; i < n; i++)
             {
                 ThingDef def = kit[i % kit.Count];
-                if (def == null || !TryPlace(output, def, map, faction, facing)) break;
+                if (def == null || !TryPlace(output, others, def, map, faction, facing)) break;
             }
         }
 
@@ -255,6 +291,12 @@ namespace HardenedRaids
             dir = dir.sqrMagnitude < 1f ? Vector2.right : dir.normalized;
             Vector2 perp = new Vector2(-dir.y, dir.x);
             var done = new HashSet<IntVec3>();
+            // CanPlaceBlueprintAt vanilla ignore les cases de servant : jamais de couverture sur le poste d'une pièce
+            foreach (Blueprint_Build b in pieces)
+            {
+                IntVec3 ic = GunnerCell(b, map);
+                if (ic.IsValid) done.Add(ic);
+            }
 
             void Line(Vector2 mid, int half, int gapEvery)
             {
