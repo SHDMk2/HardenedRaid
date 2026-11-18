@@ -82,6 +82,21 @@ namespace HardenedRaids
         // ------------------------------------------------------------ servants attitrés des camps de siège
         private static readonly MethodInfo setAsBuilder = AccessTools.Method(typeof(LordToil_Siege), "SetAsBuilder");
         private static readonly MethodInfo canBeBuilder = AccessTools.Method(typeof(LordToil_Siege), "CanBeBuilder");
+        private static readonly MethodInfo setAsDefender = AccessTools.Method(typeof(LordToil_Siege), "SetAsDefender");
+
+        /// <summary>
+        /// Avant LordToil_Siege.UpdateAllDuties : un pawn sans duty (équipage éjecté d'un véhicule par VF puis ajouté
+        /// au lord, ou tout autre AddPawn après le tick 450) devient défenseur, comme vanilla le ferait. Sans ça vanilla
+        /// lit pawn.mindState.duty.def, lève une NullReferenceException dans LordToilTick et le lord reste bloqué au
+        /// tick 450 (plus de transition, plus de couverture). Rien n'est sauvegardé : un siège déjà bloqué repart.
+        /// </summary>
+        public static void FixMissingDuties(LordToil_Siege toil)
+        {
+            List<Pawn> pawns = toil?.lord?.ownedPawns;
+            if (pawns == null || setAsDefender == null || toil.data is not LordToilData_Siege) return;
+            foreach (Pawn p in pawns)
+                if (p?.mindState != null && p.mindState.duty == null) setAsDefender.Invoke(toil, new object[] { p });
+        }
 
         private static bool CanGun(Pawn p) =>
             p != null && p.Spawned && !p.Downed && !p.Dead && !p.InMentalState && p.RaceProps.Humanlike
@@ -173,6 +188,8 @@ namespace HardenedRaids
         public static void Prefix(LordToil_Siege __instance, out Dictionary<Pawn, IntVec3> __state)
         {
             __state = null;
+            try { TurretManning.FixMissingDuties(__instance); }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] siege duties: " + e, 0x48524455); }
             List<Pawn> pawns = __instance.lord?.ownedPawns;
             if (pawns == null) return;
             foreach (Pawn p in pawns)
