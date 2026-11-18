@@ -160,7 +160,8 @@ namespace HardenedRaids
         /// 3 tanks, le reste en véhicules légers. Achat dans l'ordre appui-feu → tanks → légers, chacun en gardant
         /// de quoi payer le prix plancher des véhicules restants. Retourne les defs et le coût total.
         /// </summary>
-        public static List<ThingDef> Plan(Faction faction, float points, float tierX, int nTransports, System.Random rng, out float totalCost)
+        /// <param name="maxVehicles">plafond de blindés (0 = réglage par vague) ; un raid en N vagues passe N × le réglage.</param>
+        public static List<ThingDef> Plan(Faction faction, float points, float tierX, int nTransports, System.Random rng, out float totalCost, int maxVehicles = 0)
         {
             totalCost = 0f;
             var res = new List<ThingDef>();
@@ -174,7 +175,8 @@ namespace HardenedRaids
             if (lights.Count == 0) lights = tanks;
 
             float budget = points * HRSettings.VehiclePointShare;
-            int wanted = Mathf.Clamp(Mathf.RoundToInt(tierX - HRSettings.VehicleMinTier + 1f + points / 25000f), 1, HRSettings.MaxVehicles);
+            int wanted = Mathf.Clamp(Mathf.RoundToInt(tierX - HRSettings.VehicleMinTier + 1f + points / 25000f), 1,
+                                     maxVehicles > 0 ? maxVehicles : HRSettings.MaxVehicles);
             // plus le palier est haut, plus on préfère les gros blindés
             float exp = Mathf.Lerp(0f, 1.5f, Mathf.InverseLerp(HRSettings.VehicleMinTier, 6f, tierX));
             float minCost = cands.Min(v => Cost(v));
@@ -219,7 +221,8 @@ namespace HardenedRaids
         /// Transports pour l'infanterie restante, un seul modèle par raid. Le prix par place visé monte avec le palier :
         /// vagues pauvres → voitures, milieu → camions, fin de partie → IFV. Ce qui ne rentre pas dans le budget marche.
         /// </summary>
-        public static List<ThingDef> PlanTransports(Faction faction, float points, float tierX, int seatsNeeded, System.Random rng, out float totalCost)
+        /// <param name="maxTransports">plafond de transports (0 = réglage par vague) ; un raid en N vagues passe N × le réglage.</param>
+        public static List<ThingDef> PlanTransports(Faction faction, float points, float tierX, int seatsNeeded, System.Random rng, out float totalCost, int maxTransports = 0)
         {
             totalCost = 0f;
             var res = new List<ThingDef>();
@@ -231,7 +234,8 @@ namespace HardenedRaids
             if (cands.Count == 0) return res;
 
             float budget = points * HRSettings.TransportPointShare;
-            int Count(VehicleDef v) => Mathf.Min(Mathf.CeilToInt(seatsNeeded / (float)TransportSeats(v)), HRSettings.MaxTransports);
+            int maxT = maxTransports > 0 ? maxTransports : HRSettings.MaxTransports;
+            int Count(VehicleDef v) => Mathf.Min(Mathf.CeilToInt(seatsNeeded / (float)TransportSeats(v)), maxT);
             float PerSeat(VehicleDef v) => TransportCost(v) / TransportSeats(v);
             // exposant sur le prix par place : bas palier → favorise les moins chers, haut palier → les plus chers
             float exp = Mathf.Lerp(-2f, 2f, Mathf.InverseLerp(HRSettings.VehicleMinTier, 6f, tierX));
@@ -245,6 +249,38 @@ namespace HardenedRaids
                 res.Add(pick);
                 totalCost += TransportCost(pick);
             }
+            return res;
+        }
+
+        /// <summary>
+        /// Répartit les véhicules achetés pour tout le raid sur ses vagues (D4) : chaque blindé, du plus cher au moins
+        /// cher, puis chaque transport, va à la vague dont les véhicules coûtent le moins jusqu'ici, dans la limite
+        /// des réglages par vague. Ce qui ne rentre nulle part est abandonné (compté dans <paramref name="dropped"/>).
+        /// </summary>
+        public static List<List<ThingDef>> Distribute(List<ThingDef> armored, List<ThingDef> transports, int waves, out int dropped, out float[] waveCost)
+        {
+            waves = Mathf.Max(1, waves);
+            int lost = 0;
+            var res = new List<List<ThingDef>>();
+            for (int i = 0; i < waves; i++) res.Add(new List<ThingDef>());
+            float[] cost = new float[waves];
+            int[] nArmored = new int[waves], nTransports = new int[waves];
+            void Put(ThingDef v, float c, int[] counts, int max)
+            {
+                int best = -1;
+                for (int i = 0; i < waves; i++)
+                    if (counts[i] < max && (best < 0 || cost[i] < cost[best])) best = i;
+                if (best < 0) { lost++; return; }
+                res[best].Add(v);
+                cost[best] += c;
+                counts[best]++;
+            }
+            if (armored != null)
+                foreach (ThingDef v in armored.OrderByDescending(Cost)) Put(v, Cost(v), nArmored, HRSettings.MaxVehicles);
+            if (transports != null)
+                foreach (ThingDef v in transports) Put(v, TransportCost(v), nTransports, HRSettings.MaxTransports);
+            waveCost = cost;
+            dropped = lost;
             return res;
         }
 
@@ -361,6 +397,10 @@ namespace HardenedRaids
 
         public static bool NeedsCrew(Pawn v) => DriverSeats(v) > 0;
 
+        /// <summary>Le pawn tient un poste de pilote du véhicule.</summary>
+        public static bool Drives(Pawn v, Pawn p) =>
+            v is VehiclePawn vp && vp.handlers != null && vp.handlers.Any(h => Moves(h) && h.thingOwner.Contains(p));
+
         /// <summary>Monte à bord : poste de pilote d'abord si demandé, puis tireur manquant, puis passager.</summary>
         public static bool TryBoard(Pawn v, Pawn p, bool driver)
         {
@@ -404,10 +444,12 @@ namespace HardenedRaids
         /// <summary>
         /// Véhicule ennemi qui sort de la carte : VF emporte ses passagers tels quels. Un colon (ou tout pawn d'une
         /// autre faction) à bord est enlevé comme par un ravisseur à pied.
+        /// Seulement les véhicules de nos convois Hardened (lord LordJob_HRConvoy) : ni ceux d'autres mods, ni les autres PNJ.
         /// </summary>
         public static void KidnapAboard(Pawn vehicle)
         {
             if (vehicle is not VehiclePawn vp || vp.Faction == null || vp.Faction.IsPlayer) return;
+            if (vp.GetLord()?.LordJob is not LordJob_HRConvoy) return;
             var victims = new List<Pawn>();
             foreach (Thing t in vp.inventory.innerContainer) if (t is Pawn x) victims.Add(x);
             if (vp.handlers != null) foreach (VehicleRoleHandler h in vp.handlers) victims.AddRange(h.thingOwner.InnerListForReading);
@@ -418,6 +460,29 @@ namespace HardenedRaids
                 vp.Faction.kidnapped.Kidnap(x, vp);
                 HRLog.Msg($"{vp.LabelShort} emporte {x.LabelShort}.");
             }
+        }
+
+        /// <summary>
+        /// Préparation de la désactivation : un colon (ou tout pawn d'une autre faction) à bord d'un véhicule de convoi est
+        /// déposé à côté. Le véhicule passe dans un lord vanilla ou VF : KidnapAboard ne vaudrait plus et il l'emporterait
+        /// sans enlèvement enregistré (perdu). Retrait direct (pas DisembarkPawn : VF le mettrait dans le lord du véhicule).
+        /// </summary>
+        public static int DropCaptives(Pawn vehicle)
+        {
+            if (vehicle is not VehiclePawn vp || !vp.Spawned || vp.Faction == null) return 0;
+            var victims = new List<Pawn>();
+            foreach (Thing t in vp.inventory.innerContainer) if (t is Pawn x) victims.Add(x);
+            if (vp.handlers != null) foreach (VehicleRoleHandler h in vp.handlers) victims.AddRange(h.thingOwner.InnerListForReading);
+            int n = 0;
+            foreach (Pawn x in victims.Distinct().ToList())
+            {
+                if (x.Faction == null || x.Faction == vp.Faction || !x.RaceProps.Humanlike || x.Dead) continue;
+                if (!vp.RemovePawn(x)) continue;
+                if (!GenPlace.TryPlaceThing(x, vp.Position, vp.Map, ThingPlaceMode.Near)) GenSpawn.Spawn(x, CellFinder.RandomClosewalkCellNear(vp.Position, vp.Map, 6), vp.Map);
+                n++;
+                HRLog.Msg($"désactivation : {x.LabelShort} déposé(e) par {vp.LabelShort}.");
+            }
+            return n;
         }
 
         public static bool IsExiting(Pawn v) => v.CurJob != null && v.CurJob.exitMapOnArrival;
@@ -760,6 +825,20 @@ namespace HardenedRaids
         public float tierX;
     }
 
+    /// <summary>Convoi en attente non consommé (incident raté, lords non créés...) : oublié à la fin de l'incident.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(IncidentWorker), nameof(IncidentWorker.TryExecute))]
+    public static class Patch_ConvoyHandoffIncidentEnd
+    {
+        public static void Finalizer() => ConvoyHandoff.Pending = null;
+    }
+
+    /// <summary>Changement / chargement de partie, retour au menu : rien ne doit survivre de la partie précédente.</summary>
+    [HarmonyLib.HarmonyPatch(typeof(Verse.Profile.MemoryUtility), nameof(Verse.Profile.MemoryUtility.ClearAllMapsAndWorld))]
+    public static class Patch_ConvoyHandoffClear
+    {
+        public static void Prefix() => ConvoyHandoff.Pending = null;
+    }
+
     [HarmonyLib.HarmonyPatch(typeof(LordMaker), nameof(LordMaker.MakeNewLord))]
     public static class Patch_VehicleLord
     {
@@ -837,6 +916,8 @@ namespace HardenedRaids
             var exit2 = HarmonyLib.AccessTools.Method("Vehicles.PathingHelper:ExitMap");
             if (exit2 != null) harmony.Patch(exit2, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(ExitPrefix2)));
             Patch_EnemyHandbrake.Apply(harmony);
+            Patch_EnemyBrakesVF.Apply(harmony);
+            Patch_EnemyIdleDismount.Apply(harmony);
             Patch_TurretKeepTarget.Apply(harmony);
         }
 
@@ -880,6 +961,61 @@ namespace HardenedRaids
         public static void Postfix(object __instance, bool __state)
         {
             if (__state) handbrake.SetValue(__instance, false);
+        }
+    }
+
+    /// <summary>
+    /// Vehicle Framework 1.7.2534 : frein à main natif (VehiclePathFollower.EngageBrakes) qui abîme les roues à
+    /// chaque arrêt brusque, comme celui de VVE. Même traitement : neutralisé pour les véhicules non joueurs (l'IA
+    /// s'arrête sans cesse), en coupant le réglage VF le temps de l'appel. Rien de sauvegardé.
+    /// </summary>
+    public static class Patch_EnemyBrakesVF
+    {
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method("Vehicles.VehiclePathFollower:EngageBrakes");
+            if (m == null || HarmonyLib.AccessTools.Field("Vehicles.SectionMain:useHandBrakes") == null) return;
+            harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyBrakesVF), nameof(Prefix)),
+                finalizer: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyBrakesVF), nameof(Finalizer)));
+        }
+
+        public static void Prefix(VehiclePathFollower __instance, out bool __state)
+        {
+            __state = false;
+            SectionMain s = VehicleMod.settings?.main;
+            Faction f = __instance?.vehicle?.Faction;
+            if (s != null && s.useHandBrakes && f != null && !f.IsPlayer)
+            {
+                s.useHandBrakes = false;
+                __state = true;
+            }
+        }
+
+        public static void Finalizer(bool __state)
+        {
+            if (__state && VehicleMod.settings?.main != null) VehicleMod.settings.main.useHandBrakes = true;
+        }
+    }
+
+    /// <summary>
+    /// Vehicle Framework 1.7.2534 : un véhicule immobile depuis 5 h fait débarquer tout le monde (pensé pour les
+    /// colons). Pour l'IA ça vide les blindés garés des colonies, les pièces d'appui-feu déployées et les convois
+    /// en attente : le compteur d'inactivité est remis à zéro pour les véhicules non joueurs. Rien de sauvegardé
+    /// en plus (ticksIdle est déjà sauvegardé par VF ; mod retiré, VF reprend son comportement).
+    /// </summary>
+    public static class Patch_EnemyIdleDismount
+    {
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method("Vehicles.VehiclePawn:TickInterval");
+            if (m == null || HarmonyLib.AccessTools.Method("Vehicles.VehiclePawn:ResetIdleTicks") == null) return;
+            harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyIdleDismount), nameof(Prefix)));
+        }
+
+        public static void Prefix(VehiclePawn __instance)
+        {
+            Faction f = __instance.Faction;
+            if (f != null && !f.IsPlayer) __instance.ResetIdleTicks();
         }
     }
 

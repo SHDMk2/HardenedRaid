@@ -1,0 +1,114 @@
+using System.Collections.Generic;
+using System.Linq;
+using HarmonyLib;
+using RimWorld;
+using UnityEngine;
+using Verse;
+
+namespace HardenedRaids
+{
+    /// <summary>
+    /// Plafond par vague pour la génération vanilla d'un groupe : repli après un échec de la génération Hardened
+    /// (B12 / A10), factions non humaines (A12 : mécanoïdes…), humains quand les paliers sont coupés (EnableTiers
+    /// décoché : DU3 pour les raids, <see cref="OutOfRaidCap"/> hors raid). Le tirage vanilla des pawnkinds
+    /// (ChoosePawnGenOptionsByPoints, rien n'est encore généré) est tronqué au plafond. Raid (groupe principal) : le reste
+    /// part en vagues différées, chacune avec les points des pawnkinds qu'elle remplace (tolérance de 10 %). Hors raid :
+    /// une vague, plafond strict (× SettlementCapFactor pour les défenseurs d'une colonie : DU2), surplus perdu ; sauf les
+    /// entités d'Anomaly (DU13), dont le surplus part en vagues propres (<see cref="EntityWaves"/>).
+    /// </summary>
+    public static class VanillaWaveCap
+    {
+        private static PawnGroupMakerParms armed;
+        private static RaidFrame armedFrame;
+        private static int armedCap;
+        private static Map armedEntityMap;
+
+        /// <param name="frame">cadre du raid si c'est son groupe principal (vagues possibles), sinon null (simple troncature).</param>
+        /// <param name="entityMap">groupe d'entités hors raid (DU13) : carte de ses vagues différées, null = surplus perdu.</param>
+        public static bool Arm(PawnGroupMakerParms parms, RaidFrame frame, int cap, Map entityMap = null)
+        {
+            if (parms == null || cap <= 0) return false;
+            armed = parms;
+            armedFrame = frame;
+            armedCap = cap;
+            armedEntityMap = frame == null ? entityMap : null;
+            return true;
+        }
+
+        public static void Disarm()
+        {
+            armed = null;
+            armedFrame = null;
+            armedEntityMap = null;
+        }
+
+        /// <summary>
+        /// Plafond d'un groupe humain hors raid généré par vanilla (EnableTiers décoché ; avec les paliers, la génération
+        /// Hardened et son repli plafonnent déjà) : groupe hostile (site, quête, embuscade…) au plafond par vague, défenseurs
+        /// d'une colonie en génération, hostile ou neutre / alliée attaquée (DU1), à ce plafond × SettlementCapFactor (DU2).
+        /// Une seule vague, surplus perdu. 0 = pas de plafond.
+        /// </summary>
+        internal static int OutOfRaidCap(PawnGroupMakerParms parms)
+        {
+            if (HRSettings.EnableTiers) return 0;
+            Faction f = parms?.faction;
+            if (f == null || f.IsPlayer || f.def == null || !f.def.humanlikeFaction) return 0;
+            if (parms.groupKind != PawnGroupKindDefOf.Combat && parms.groupKind != PawnGroupKindDefOf.Settlement) return 0;
+            if (!f.HostileTo(Faction.OfPlayer) && !SettlementDefense.IsDefenderGroup(parms)) return 0;
+            return Tiers.WaveCapFor(f.def) * RaidGenerator.SingleWaveCapFactor(parms);
+        }
+
+        /// <summary>Plafond des non-humains : le réglage low-tech (décision D5).</summary>
+        public static int NonHumanCap => HRSettings.CapLowTech;
+
+        internal static void Apply(PawnGroupMakerParms groupParms, ref IEnumerable<PawnGenOptionWithXenotype> result)
+        {
+            if (armed == null || groupParms != armed || result == null) return;
+            RaidFrame frame = armedFrame;
+            int cap = armedCap;
+            Map entityMap = armedEntityMap;
+            Disarm();   // une seule fois : les tirages imbriqués éventuels ne sont pas concernés
+            List<PawnGenOptionWithXenotype> list = result as List<PawnGenOptionWithXenotype> ?? result.ToList();
+            int n = list.Count;
+            float totalCost = list.Sum(o => o.Cost);
+            bool canWave = frame != null && frame.Wave == null && !frame.DebugTest && frame.Parms != null && totalCost > 0f;
+            bool entityWave = entityMap != null && totalCost > 0f;   // entités hors raid : vagues propres (DU13)
+            // comme le plan Hardened (RaidPlan.Make) : tolérance de 10 % dans un raid (pas de mini-vague) ; hors raid
+            // (colonie ×2 : DU2, autres groupes ×1) plafond strict, au pawn près
+            if (frame != null ? n <= cap * 1.1f : n <= cap) return;
+            int waves = Mathf.CeilToInt(n / (float)cap);
+            // vagues égales ; sans vagues (hors raid, vague 2+), on garde tout le plafond
+            int keep = canWave || entityWave ? Mathf.CeilToInt(n / (float)waves) : cap;
+            // le chef reste dans la première vague
+            List<PawnGenOptionWithXenotype> ordered = list.OrderByDescending(o => o.Option.kind.factionLeader).ToList();
+            List<PawnGenOptionWithXenotype> kept = ordered.Take(keep).ToList();
+            List<PawnGenOptionWithXenotype> rest = ordered.Skip(keep).ToList();
+            result = kept;
+
+            HRLog.Msg($"génération vanilla plafonnée ({groupParms.faction?.Name}, {groupParms.points:F0} pts) : {kept.Count}/{n} pawns"
+                      + (canWave || entityWave ? $", {rest.Count} en {waves - 1} vague(s) différée(s)." : ", le reste est abandonné."));
+            if (entityWave)
+            {
+                EntityWaves.Schedule(groupParms, entityMap, rest, keep, totalCost, n, kept.Count);
+                return;
+            }
+            if (!canWave) return;
+            var wp = new WavePlan { total = n, waves = waves, tierX = -1f, vanilla = true };
+            for (int i = 0; i < rest.Count; i += keep)
+            {
+                List<PawnGenOptionWithXenotype> chunk = rest.Skip(i).Take(keep).ToList();
+                wp.next.Add(new WavePlanItem { count = chunk.Count, share = chunk.Sum(o => o.Cost) / totalCost });
+            }
+            frame.Planned = wp;
+        }
+    }
+
+    [HarmonyPatch(typeof(PawnGroupMakerUtility), nameof(PawnGroupMakerUtility.ChoosePawnGenOptionsByPoints))]
+    public static class Patch_ChooseOptionsWaveCap
+    {
+        public static void Postfix(PawnGroupMakerParms groupParms, ref IEnumerable<PawnGenOptionWithXenotype> __result)
+        {
+            VanillaWaveCap.Apply(groupParms, ref __result);
+        }
+    }
+}

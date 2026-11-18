@@ -25,6 +25,15 @@ namespace HardenedRaids
         public static float WaveDelayHoursMin = 2f;
         public static float WaveDelayHoursMax = 6f;
 
+        // --- Autres events ---
+        public static float AnimalRarityFloor = 0.10f;       // chance minimale des events animaux quand la menace les dépasse
+        public static bool EntityOverflowWaves = true;               // entités d'Anomaly au-delà du plafond : vagues différées (sinon perdues)
+        public static float ClusterTurretCostFactor = 3f;    // prix des tourelles de grappe mécanoïde
+
+        // --- lot cluster ---
+        public static float MechClusterBudget = 20000f;      // points max d'une grappe ; au-delà, grappes supplémentaires
+        public static int MaxSimultaneousClusters = 3;       // grappes posées en même temps ; le reste arrive plus tard
+
         // --- IA ---
         public static bool SmarterStrategies = true;
         public static bool VeteransAvoidTurrets = true;
@@ -50,6 +59,11 @@ namespace HardenedRaids
         public static float SupportMinTier = 3f;
         public static float SupportShare = 0.12f;  // part des raiders qui montent le camp d'appui
 
+        // --- lot uncap ---
+        public static float SettlementThreatShare = 0.25f; // défenseurs des colonies hostiles : part de la menace du joueur
+        public static bool SettlementVehicles = true;      // véhicules VF garés autour des colonies hostiles
+        public static bool SettlementTurrets = true;       // tourelles des mods dans la défense périphérique
+
         public static bool VerboseLog = false;
         public static HRLanguage Language = HRLanguage.English;
 
@@ -70,6 +84,12 @@ namespace HardenedRaids
             Scribe_Values.Look(ref CapLowTech, "CapLowTech", 300);
             Scribe_Values.Look(ref WaveDelayHoursMin, "WaveDelayHoursMin", 2f);
             Scribe_Values.Look(ref WaveDelayHoursMax, "WaveDelayHoursMax", 6f);
+            Scribe_Values.Look(ref AnimalRarityFloor, "AnimalRarityFloor", 0.10f);
+            Scribe_Values.Look(ref EntityOverflowWaves, "EntityWaves", true);
+            Scribe_Values.Look(ref ClusterTurretCostFactor, "ClusterTurretCostFactor", 3f);
+            // --- lot cluster ---
+            Scribe_Values.Look(ref MechClusterBudget, "MechClusterBudget", 20000f);
+            Scribe_Values.Look(ref MaxSimultaneousClusters, "MaxSimultaneousClusters", 3);
             Scribe_Values.Look(ref SmarterStrategies, "SmarterStrategies", true);
             Scribe_Values.Look(ref VeteransAvoidTurrets, "VeteransAvoidTurrets", true);
             Scribe_Values.Look(ref IgnoreDeadTurrets, "IgnoreDeadTurrets", true);
@@ -91,14 +111,24 @@ namespace HardenedRaids
             Scribe_Values.Look(ref EnableSupportTeams, "EnableSupportTeams", true);
             Scribe_Values.Look(ref SupportMinTier, "SupportMinTier", 3f);
             Scribe_Values.Look(ref SupportShare, "SupportShare", 0.12f);
+            // --- lot uncap ---
+            Scribe_Values.Look(ref SettlementThreatShare, "SettlementThreatShare", 0.25f);
+            Scribe_Values.Look(ref SettlementVehicles, "SettlementVehicles", true);
+            Scribe_Values.Look(ref SettlementTurrets, "SettlementTurrets", true);
             Scribe_Values.Look(ref VerboseLog, "VerboseLog", false);
             Scribe_Values.Look(ref Language, "Language", HRLanguage.English);
         }
 
+        // défilement : la v1.1 a ajouté assez de réglages pour dépasser la hauteur de la fenêtre
+        private static Vector2 scroll;
+        private static float viewHeight = 1400f;
+
         public static void DoWindow(Rect rect)
         {
-            var l = new Listing_Standard { ColumnWidth = rect.width / 2f - 17f };
-            l.Begin(rect);
+            var view = new Rect(0f, 0f, rect.width - 16f, Mathf.Max(rect.height, viewHeight));
+            Widgets.BeginScrollView(rect, ref scroll, view);
+            var l = new Listing_Standard { ColumnWidth = view.width / 2f - 17f };
+            l.Begin(view);
 
             Rect langRow = l.GetRect(28f);
             Widgets.Label(langRow.LeftHalf(), Strings.T("Language"));
@@ -115,16 +145,22 @@ namespace HardenedRaids
             l.GapLine();
 
             l.Label(Strings.T("SecPoints"));
-            l.CheckboxLabeled(Strings.T("UncapPoints"), ref UncapPoints);
+            bool uncapBefore = UncapPoints;   // lot uncap : les courbes hors raid suivent ce réglage
+            l.CheckboxLabeled(Strings.T("UncapPoints"), ref UncapPoints, Strings.T("UncapPointsTip"));
             bool before = ExtendWealthCurves;
             l.CheckboxLabeled(Strings.T("ExtendCurves"), ref ExtendWealthCurves, Strings.T("ExtendCurvesTip"));
-            if (before != ExtendWealthCurves) PointsPatches.ApplyCurves();
+            if (before != ExtendWealthCurves || uncapBefore != UncapPoints) PointsPatches.ApplyCurves();
             if (Current.ProgramState == ProgramState.Playing && Find.CurrentMap != null)
                 l.Label(Strings.T("PointsNow", RimWorld.StorytellerUtility.DefaultThreatPointsNow(Find.CurrentMap).ToString("F0")));
+            // --- lot uncap ---
+            SettlementThreatShare = Mathf.Round(l.SliderLabeled(Strings.T("SettlementShare", SettlementThreatShare.ToString("P0")), SettlementThreatShare, 0f, 1f, 0.5f,
+                Strings.T("SettlementShareTip")) * 20f) / 20f;
+            l.CheckboxLabeled(Strings.T("SettlementTurrets"), ref SettlementTurrets, Strings.T("SettlementTurretsTip"));
+            l.CheckboxLabeled(Strings.T("SettlementVehicles"), ref SettlementVehicles, Strings.T("SettlementVehiclesTip"));
             l.GapLine();
 
             l.Label(Strings.T("SecTiers"));
-            l.CheckboxLabeled(Strings.T("EnableTiers"), ref EnableTiers);
+            l.CheckboxLabeled(Strings.T("EnableTiers"), ref EnableTiers, Strings.T("EnableTiersTip"));
             CostFactor = l.SliderLabeled(Strings.T("CostFactor", CostFactor.ToString("F2")), CostFactor, 0.5f, 2f, 0.5f, Strings.T("CostFactorTip"));
             CostFactor = Mathf.Round(CostFactor * 20f) / 20f;
             TierSpeed = l.SliderLabeled(Strings.T("TierSpeed", TierSpeed.ToString("F2")), TierSpeed, 0.5f, 3f, 0.5f, Strings.T("TierSpeedTip"));
@@ -146,8 +182,23 @@ namespace HardenedRaids
             if (WaveDelayHoursMax < WaveDelayHoursMin) WaveDelayHoursMax = WaveDelayHoursMin;
             l.GapLine();
             l.CheckboxLabeled(Strings.T("VerboseLog"), ref VerboseLog);
+            // --- lot S --- désactivation du mod (en partie seulement)
+            Uninstall.DrawButton(l);
 
             l.NewColumn();
+            l.Label(Strings.T("SecEvents"));
+            l.Label(Strings.T("AnimalCap", AnimalCaps.MaxAnimals));
+            AnimalRarityFloor = Mathf.Round(l.SliderLabeled(Strings.T("AnimalRarity", AnimalRarityFloor.ToString("P0")), AnimalRarityFloor, 0f, 1f, 0.5f,
+                Strings.T("AnimalRarityTip")) * 20f) / 20f;
+            l.CheckboxLabeled(Strings.T("EntityWaves"), ref EntityOverflowWaves, Strings.T("EntityWavesTip"));
+            ClusterTurretCostFactor = Mathf.Round(l.SliderLabeled(Strings.T("ClusterTurrets", ClusterTurretCostFactor.ToString("F2")), ClusterTurretCostFactor, 1f, 6f, 0.5f,
+                Strings.T("ClusterTurretsTip")) * 4f) / 4f;
+            // --- lot cluster ---
+            MechClusterBudget = Mathf.Round(l.SliderLabeled(Strings.T("ClusterBudget", MechClusterBudget.ToString("N0")), MechClusterBudget, 10000f, 50000f, 0.5f,
+                Strings.T("ClusterBudgetTip")) / 1000f) * 1000f;
+            MaxSimultaneousClusters = (int)l.SliderLabeled(Strings.T("MaxClusters", MaxSimultaneousClusters), MaxSimultaneousClusters, 1, 6, 0.5f, Strings.T("MaxClustersTip"));
+            l.GapLine();
+
             l.Label(Strings.T("SecAI"));
             l.CheckboxLabeled(Strings.T("Smarter"), ref SmarterStrategies);
             l.CheckboxLabeled(Strings.T("AvoidTurrets"), ref VeteransAvoidTurrets);
@@ -177,7 +228,9 @@ namespace HardenedRaids
             l.CheckboxLabeled(Strings.T("TruckTurrets"), ref TruckTurrets);
             MaxTruckTurrets = (int)l.SliderLabeled(Strings.T("MaxTruckTurrets", MaxTruckTurrets), MaxTruckTurrets, 0, 10, 0.5f);
 
+            viewHeight = l.MaxColumnHeightSeen + 12f;
             l.End();
+            Widgets.EndScrollView();
         }
     }
 
@@ -190,9 +243,29 @@ namespace HardenedRaids
             Instance = this;
             GetSettings<HRSettings>();
             var harmony = new HarmonyLib.Harmony("shdmk2.hardenedraids");
-            harmony.PatchAll();
+            PatchAllSafe(harmony);
             Patch_SpawnNearVehicle.Apply(harmony);
             Log.Message("[Hardened Raids] loaded.");
+        }
+
+        /// <summary>
+        /// PatchAll classe par classe : une classe de patch qui échoue (méthode cible absente, mod incompatible…) est
+        /// signalée et ignorée, au lieu d'interrompre PatchAll et le constructeur du mod (plus de réglages, patchs partiels).
+        /// </summary>
+        private static void PatchAllSafe(HarmonyLib.Harmony harmony)
+        {
+            int failed = 0;
+            foreach (System.Type t in HarmonyLib.AccessTools.GetTypesFromAssembly(typeof(HardenedRaidsMod).Assembly))
+            {
+                if (t.GetCustomAttributes(typeof(HarmonyLib.HarmonyAttribute), true).Length == 0) continue;
+                try { harmony.CreateClassProcessor(t).Patch(); }
+                catch (System.Exception e)
+                {
+                    failed++;
+                    Log.Error($"[Hardened Raids] patch {t.Name} failed, skipped: {e}");
+                }
+            }
+            if (failed > 0) Log.Error($"[Hardened Raids] {failed} patch class(es) failed, see above.");
         }
 
         public override string SettingsCategory() => "Hardened Raids";

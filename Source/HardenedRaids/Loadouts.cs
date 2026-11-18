@@ -296,6 +296,35 @@ namespace HardenedRaids
                 .Cast<ThingStuffPair?>().FirstOrDefault();
         }
 
+        /// <summary>Tenues étanches au vide que vanilla donnerait gratuitement (Odyssey), portables par ce pawn.</summary>
+        public static IEnumerable<ThingStuffPair> VacuumCandidates(Pawn pawn)
+        {
+            if (apparelPairs == null) yield break;
+            foreach (ThingStuffPair p in apparelPairs)
+            {
+                if (!p.thing.apparel.canBeGeneratedToSatisfyVacuumResistance || p.VacuumResistance < 0.1f) continue;
+                if (!p.thing.apparel.CorrectAgeForWearing(pawn) || !p.thing.apparel.PawnCanWear(pawn) || !ApparelUtility.HasPartsToWear(pawn, p.thing)) continue;
+                yield return p;
+            }
+        }
+
+        /// <summary>
+        /// Masques que vanilla donnerait gratuitement en zone polluée (Biotech, PawnApparelGenerator.AddFreeToxicEnvironmentResistanceAsNeeded) :
+        /// « canBeGeneratedToSatisfyToxicEnvironmentResistance », résistance &gt; 0,25, prix &lt;= maxPrice, portables par ce pawn
+        /// sans rien retirer (couche et parties du corps libres).
+        /// </summary>
+        public static IEnumerable<ThingStuffPair> ToxicCandidates(Pawn pawn, float maxPrice)
+        {
+            if (apparelPairs == null) yield break;
+            foreach (ThingStuffPair p in apparelPairs)
+            {
+                if (!p.thing.apparel.canBeGeneratedToSatisfyToxicEnvironmentResistance || p.ToxicEnvironmentResistance <= 0.25f || p.Price > maxPrice) continue;
+                if (!p.thing.apparel.CorrectAgeForWearing(pawn) || !p.thing.apparel.PawnCanWear(pawn) || !ApparelUtility.HasPartsToWear(pawn, p.thing)) continue;
+                if (!pawn.apparel.CanWearWithoutDroppingAnything(p.thing)) continue;
+                yield return p;
+            }
+        }
+
         // ---------------------------------------------------------------- armes
         private static List<ThingStuffPair> WeaponCands(FactionTables t, float budget, Func<ThingDef, bool> filter, bool ignoreTags = false) =>
             weaponPairs == null ? new List<ThingStuffPair>() :

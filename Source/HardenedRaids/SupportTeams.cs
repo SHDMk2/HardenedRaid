@@ -23,7 +23,12 @@ namespace HardenedRaids
             if (parms.raidStrategy?.Worker == null || parms.raidStrategy.Worker is RaidStrategyWorker_Siege) return;
             if (parms.faction.def.techLevel < TechLevel.Industrial || !parms.faction.def.humanlikeFaction) return;
             if (parms.raidArrivalMode?.workerClass == null || !parms.raidArrivalMode.workerClass.Name.Contains("Edge")) return;
-            float x = Tiers.TierX(parms.faction.def, parms.points);
+            // palier forcé du raid : celui de la vague en cours (WaveEntry.tierX, fixé par la vague 1), sinon celui du raid
+            // (parms.points = points ajustés, les mêmes que ceux du plan de génération)
+            WaveEntry wave = RaidContext.PendingWave;
+            bool ourWave = wave != null && wave.map == map && wave.faction == parms.faction;
+            if (ourWave && wave.FromSiege) return;   // vague 2+ d'un siège : seul le camp de la vague 1 existe (A5)
+            float x = ourWave ? wave.tierX : Tiers.TierX(parms.faction.def, parms.points);
             if (x < HRSettings.SupportMinTier) return;
 
             List<Pawn> cands = pawns.Where(p => p.Spawned && !p.Downed && p.RaceProps.Humanlike && !VehicleGate.IsVehicle(p)
@@ -44,7 +49,9 @@ namespace HardenedRaids
             List<Pawn> team = cands.InRandomOrder().Take(n).ToList();
             foreach (Pawn p in team) pawns.Remove(p);
             float blueprintPoints = Mathf.Max(60f, parms.points * 0.25f);
-            LordMaker.MakeNewLord(parms.faction, new LordJob_Siege(parms.faction, spot, blueprintPoints), map, team);
+            Lord camp = LordMaker.MakeNewLord(parms.faction, new LordJob_Siege(parms.faction, spot, blueprintPoints), map, team);
+            SiegeTier.Register(camp.LordJob, x);                          // camp au palier du raid, pas de ses points
+            MapComponent_HostileTurretSupply.RegisterSupportLord(camp);   // ses tourelles seront ravitaillées
             Messages.Message(Strings.T("MsgSupportTeam", parms.faction.Name, team.Count),
                 new TargetInfo(spot, map), MessageTypeDefOf.ThreatBig);
             HRLog.Msg($"équipe d'appui : {team.Count} raiders, camp en {spot} (palier {x:F1}).");
@@ -64,11 +71,15 @@ namespace HardenedRaids
     }
 
     /// <summary>
-    /// Munitions des tourelles ennemies.
+    /// Munitions des tourelles ennemies posées par le mod, et seulement elles (registre sauvegardé) :
+    ///  - camps de siège améliorés (<see cref="Patch_SiegeBlueprints"/>, réglage SiegeUpgrade) et camps des équipes
+    ///    d'appui : tourelles construites par un lord de siège (vanilla les lui ajoute, Frame.CompleteConstruction) ;
+    ///  - tourelles déchargées des camions (<see cref="TruckTurrets"/>, lord LordJob_HRTurretCrew).
+    /// Aucune autre tourelle n'est touchée (joueur, alliés, grappes mécanoïdes, sites, colonies, autres mods).
     ///  - Une caisse de munitions est posée à côté de chaque tourelle servie : sous CE, un servant ne prend son poste
     ///    que s'il voit des munitions au sol (et le joueur peut les récupérer après).
     ///  - Tourelle servie (servant à son poste) ou automatique : chargeur CE / obus / carburant remis à niveau.
-    /// Plus de ravitaillement quand il ne reste plus aucun raider près de la pièce.
+    /// Plus de ravitaillement quand il ne reste plus près de la pièce aucun raider de la faction dans un lord actif.
     /// </summary>
     public class MapComponent_HostileTurretSupply : MapComponent
     {
@@ -76,18 +87,75 @@ namespace HardenedRaids
         private static PropertyInfo compAmmoProp, curMag, magSize, curAmmo, props;
         private static MethodInfo resetAmmo;
         private static FieldInfo ammoSetField, ammoTypesField, ammoField;
-        private readonly Dictionary<int, int> drops = new Dictionary<int, int>();
+
+        // état sauvegardé (absent d'une save v1.0 : vide)
+        private Dictionary<int, int> drops = new Dictionary<int, int>();           // caisses déjà posées, par thingIDNumber
+        private List<Building_Turret> turrets = new List<Building_Turret>();        // registre
+        private List<Lord> supportLords = new List<Lord>();                         // camps des équipes d'appui
+        private List<int> dropKeys, dropValues;
 
         public MapComponent_HostileTurretSupply(Map map) : base(map) { }
+
+        public static MapComponent_HostileTurretSupply For(Map map) => map?.GetComponent<MapComponent_HostileTurretSupply>();
+
+        public static void Register(Building_Turret t)
+        {
+            MapComponent_HostileTurretSupply c = For(t?.Map);
+            if (c != null && !t.Destroyed && !c.turrets.Contains(t)) c.turrets.Add(t);
+        }
+
+        public static void RegisterSupportLord(Lord l)
+        {
+            MapComponent_HostileTurretSupply c = For(l?.Map);
+            if (c != null && !c.supportLords.Contains(l)) c.supportLords.Add(l);
+        }
+
+        public bool IsRegistered(Building_Turret t) => turrets.Contains(t);
+
+        private static bool Gone(Thing t) => t == null || t.Destroyed;   // Destroyed inclut Discarded
+
+        private static bool HostileNpc(Faction f) => f != null && !f.IsPlayer && f.HostileTo(Faction.OfPlayer);
+
+        /// <summary>Tourelles construites par nos camps de siège / d'appui et tourelles de camion : ajoutées au registre.</summary>
+        private void ScanLords()
+        {
+            List<Lord> lords = map.lordManager.lords;
+            supportLords.RemoveAll(l => l == null || !lords.Contains(l));
+            for (int i = 0; i < lords.Count; i++)
+            {
+                Lord l = lords[i];
+                if (l.ownedBuildings.Count == 0 || !HostileNpc(l.faction)) continue;
+                bool ours = l.LordJob is LordJob_HRTurretCrew
+                            || (l.LordJob is LordJob_Siege && (HRSettings.SiegeUpgrade || supportLords.Contains(l)));
+                if (!ours) continue;
+                foreach (Building b in l.ownedBuildings)
+                    if (b is Building_Turret t && !t.Destroyed && !turrets.Contains(t)) turrets.Add(t);
+            }
+        }
+
+        private void Purge()
+        {
+            turrets.RemoveAll(Gone);
+            if (drops.Count > 0)
+            {
+                var keep = new HashSet<int>(turrets.Select(t => t.thingIDNumber));
+                foreach (int k in drops.Keys.Where(k => !keep.Contains(k)).ToList()) drops.Remove(k);
+            }
+            supportLords.RemoveAll(l => l == null || !map.lordManager.lords.Contains(l));
+        }
 
         public override void MapComponentTick()
         {
             if (Find.TickManager.TicksGame % 300 != 0) return;
             try
             {
-                foreach (Building b in map.listerBuildings.allBuildingsNonColonist.ToList())
+                ScanLords();
+                if (turrets.Count == 0) return;
+                for (int i = turrets.Count - 1; i >= 0; i--)
                 {
-                    if (b is not Building_Turret t || t.Faction == null || t.Faction.IsPlayer || !t.Faction.HostileTo(Faction.OfPlayer)) continue;
+                    Building_Turret t = turrets[i];
+                    if (Gone(t)) { if (t != null) drops.Remove(t.thingIDNumber); turrets.RemoveAt(i); continue; }
+                    if (!t.Spawned || t.Map != map || !HostileNpc(t.Faction)) continue;   // capturée, abandonnée, désinstallée
                     CompMannable man = t.GetComp<CompMannable>();
                     if (man != null)
                     {
@@ -96,6 +164,7 @@ namespace HardenedRaids
                         if (n < 4 && !AmmoNear(t)) { DropAmmoNear(t, 3); drops[t.thingIDNumber] = n + 1; }
                         if (!man.MannedNow) continue;
                     }
+                    else if (!FriendNear(t, 20f)) continue;
                     Supply(t);
                 }
             }
@@ -105,8 +174,44 @@ namespace HardenedRaids
             }
         }
 
+        public override void ExposeData()
+        {
+            base.ExposeData();
+            if (Scribe.mode == LoadSaveMode.Saving)
+            {
+                try { Purge(); }
+                catch (Exception e) { Log.Warning("[Hardened Raids] turret registry cleanup: " + e.Message); }
+            }
+            Scribe_Collections.Look(ref turrets, "turrets", LookMode.Reference);
+            Scribe_Collections.Look(ref supportLords, "supportLords", LookMode.Reference);
+            Scribe_Collections.Look(ref drops, "drops", LookMode.Value, LookMode.Value, ref dropKeys, ref dropValues);
+            if (Scribe.mode == LoadSaveMode.PostLoadInit)
+            {
+                turrets ??= new List<Building_Turret>();
+                supportLords ??= new List<Lord>();
+                drops ??= new Dictionary<int, int>();
+                turrets.RemoveAll(Gone);            // référence non résolue = null
+                supportLords.RemoveAll(l => l == null);
+            }
+        }
+
+        /// <summary>Préparer la désactivation : registre, caisses posées et camps oubliés sur toutes les cartes.</summary>
+        public static void PrepareUninstall()
+        {
+            foreach (Map m in Find.Maps)
+            {
+                MapComponent_HostileTurretSupply c = For(m);
+                if (c == null) continue;
+                c.turrets.Clear();
+                c.supportLords.Clear();
+                c.drops.Clear();
+            }
+        }
+
+        /// <summary>Un raider de la faction de la tourelle, debout, dans un lord actif (pas en fuite / sortie), à portée.</summary>
         private static bool FriendNear(Building_Turret t, float r) =>
-            t.Map.mapPawns.SpawnedPawnsInFaction(t.Faction).Any(p => p.RaceProps.Humanlike && !p.Downed && p.Position.InHorDistOf(t.Position, r));
+            t.Map.mapPawns.SpawnedPawnsInFaction(t.Faction).Any(p => p.RaceProps.Humanlike && !p.Downed && p.Position.InHorDistOf(t.Position, r)
+                                                                    && p.GetLord() is Lord l && !LordJob_HRConvoy.ExitLike(l));
 
         private static void Reflect(Type turretType)
         {

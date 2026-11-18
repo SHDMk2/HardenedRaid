@@ -93,9 +93,11 @@ namespace HardenedRaids
         /// <summary>Palier continu (0 = vanilla) pour une faction et un nombre de points.</summary>
         public static float TierX(FactionDef f, float points)
         {
-            if (points < 1000f) return 0f;
+            // la vitesse déplace toute la courbe, seuil T0→T1 compris (1000 pts à ×1, 500 à ×2…)
+            float scaled = points * HRSettings.TierSpeed;
+            if (scaled < 1000f) return 0f;
             SimpleCurve c = IsLowTech(f) ? NeolithicTierCurve : IndustrialTierCurve;
-            float x = c.Evaluate(points * HRSettings.TierSpeed) ;
+            float x = c.Evaluate(scaled);
             return UnityEngine.Mathf.Clamp(x, 0f, LadderFor(f).Length - 1);
         }
 

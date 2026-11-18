@@ -35,6 +35,7 @@ namespace HardenedRaids
         public int retreatStart;
         public Lord retreatLord;
         public List<Pawn> leaving = new List<Pawn>();
+        public bool infantryGone;   // le lord d'infanterie a disparu avant la retraite (référence purgée à la sauvegarde)
         private Dictionary<Pawn, int> leaveStart = new Dictionary<Pawn, int>(); // non sauvegardé : repart à zéro au chargement
 
         public const string MemoAllUnloaded = "HRConvoyArrived";
@@ -52,6 +53,9 @@ namespace HardenedRaids
         }
 
         public override bool AddFleeToil => false;
+
+        /// <summary>Faction disparue au chargement (mod retiré...) : vanilla supprime le lord proprement (Lord.ExposeData_StateGraph).</summary>
+        public override bool LostImportantReferenceDuringLoading => faction == null;
 
         public override StateGraph CreateGraph()
         {
@@ -81,6 +85,7 @@ namespace HardenedRaids
             if (retreating) return RetreatLord(map);
             if (infantryLord != null && map.lordManager.lords.Contains(infantryLord)) return infantryLord;
             infantryLord = LordMaker.MakeNewLord(faction, new LordJob_AssaultColony(faction, canKidnap: true, canTimeoutOrFlee: true), map);
+            infantryGone = false;   // nouveau lord d'infanterie : le raid continue (comme avant la purge)
             return infantryLord;
         }
 
@@ -103,9 +108,44 @@ namespace HardenedRaids
         /// <summary>Victoire ou défaite : le lord d'infanterie du raid fuit / quitte la carte, ou n'existe plus.</summary>
         public bool RaidOver(Map map)
         {
-            if (infantryLord == null) return false;
+            if (infantryGone) return true;
+            // référence perdue (save v1.0 : lord supprimé puis sauvegardé) : fini si plus aucun groupe de la faction n'attaque
+            if (infantryLord == null) return !FactionAttacking(map);
             if (!map.lordManager.lords.Contains(infantryLord) || infantryLord.ownedPawns.Count == 0) return true;
             return ExitLike(infantryLord);
+        }
+
+        private bool FactionAttacking(Map map) =>
+            map.lordManager.lords.Any(l => l != lord && l.faction == faction && l.ownedPawns.Count > 0 && !ExitLike(l)
+                                           && l.LordJob is not LordJob_HRConvoy && l.LordJob is not LordJob_HRTurretCrew && l.LordJob is not LordJob_HRBoard);
+
+        // ------------------------------------------------------------ purge des références mortes (B11)
+        /// <summary>Pawn à oublier : détruit ou jeté (Destroyed inclut Discarded). Jamais sur « non apparu » (à bord d'un véhicule, en transit).</summary>
+        public static bool Gone(Thing t) => t == null || t.Destroyed;
+
+        /// <summary>
+        /// Retire les pawns détruits/jetés et les lords qui ne sont plus dans le lordManager, pour ne pas sauvegarder de
+        /// référence impossible à résoudre (« Could not resolve reference »). Appelé par les toils (toutes les 600 ticks)
+        /// et à la sauvegarde.
+        /// </summary>
+        public void PurgeDeadRefs(Map map)
+        {
+            dismount?.RemoveAll(Gone);
+            unloaded?.RemoveAll(Gone);
+            leaving?.RemoveAll(Gone);
+            foreach (Pawn p in leaveStart.Keys.Where(Gone).ToList()) leaveStart.Remove(p);
+            foreach (Pawn p in coverCells.Keys.Where(Gone).ToList()) coverCells.Remove(p);
+            foreach (Pawn p in lastFire.Keys.Where(Gone).ToList()) lastFire.Remove(p);
+            abandoned.RemoveWhere(Gone);
+            holding.RemoveWhere(Gone);
+            if (map == null) return;
+            if (infantryLord != null && !map.lordManager.lords.Contains(infantryLord))
+            {
+                // avant la retraite, la disparition du lord d'infanterie = fin du raid : on garde l'information
+                if (!retreating) infantryGone = true;
+                infantryLord = null;
+            }
+            if (retreatLord != null && !map.lordManager.lords.Contains(retreatLord)) retreatLord = null;   // RetreatLord() en recrée un
         }
 
         public void StartRetreat(Map map)
@@ -277,7 +317,8 @@ namespace HardenedRaids
         }
 
         // ------------------------------------------------------------ débarquement d'un véhicule
-        public void Unload(Pawn v, Map map)
+        /// <param name="keepDriver">camion : le pilote reste à bord (préparation de la désactivation : le camion repart seul)</param>
+        public void Unload(Pawn v, Map map, bool keepDriver = false)
         {
             if (unloaded.Contains(v)) return;
             unloaded.Add(v);
@@ -288,6 +329,7 @@ namespace HardenedRaids
             foreach (Pawn p in VehicleCompat.PawnsAboard(v).ToList())
             {
                 if (!truck && !dismount.Contains(p)) continue;   // blindé : pilote et tireurs restent
+                if (truck && keepDriver && VehicleCompat.Drives(v, p)) continue;
                 VehicleCompat.Disembark(v, p);
                 if (!p.Spawned) continue;
                 if (p.GetLord() == null) inf.AddPawn(p);
@@ -367,6 +409,11 @@ namespace HardenedRaids
 
         public override void ExposeData()
         {
+            if (Scribe.mode == LoadSaveMode.Saving)
+            {
+                try { PurgeDeadRefs(lord?.Map); }
+                catch (Exception e) { Log.Warning("[Hardened Raids] convoy save cleanup: " + e.Message); }
+            }
             Scribe_References.Look(ref faction, "faction");
             Scribe_References.Look(ref infantryLord, "infantryLord");
             Scribe_Collections.Look(ref dismount, "dismount", LookMode.Reference);
@@ -381,6 +428,7 @@ namespace HardenedRaids
             Scribe_Values.Look(ref retreatStart, "retreatStart");
             Scribe_References.Look(ref retreatLord, "retreatLord");
             Scribe_Collections.Look(ref leaving, "leaving", LookMode.Reference);
+            Scribe_Values.Look(ref infantryGone, "infantryGone");   // absent (save v1.0) : false
             dismount ??= new List<Pawn>();
             unloaded ??= new List<Pawn>();
             kit ??= new List<ThingDef>();
@@ -477,6 +525,7 @@ namespace HardenedRaids
             if (Find.TickManager.TicksGame % 60 != 0) return;
             int now = Find.TickManager.TicksGame;
             Map map = Map;
+            if (now % 600 == 0) Job.PurgeDeadRefs(map);
             foreach (Pawn v in lord.ownedPawns.ToList())
             {
                 if (!v.Spawned || Job.unloaded.Contains(v)) continue;
@@ -524,6 +573,7 @@ namespace HardenedRaids
         {
             int now = Find.TickManager.TicksGame;
             if (now % 60 != 0) return;
+            if (now % 600 == 0) Job.PurgeDeadRefs(Map);
             foreach (Pawn v in lord.ownedPawns.ToList())
             {
                 if (now % 240 == 0) VehicleCompat.Ready(v);
@@ -558,7 +608,11 @@ namespace HardenedRaids
         {
             int now = Find.TickManager.TicksGame;
             if (now % 60 != 0) return;
-            try { Job.TickRetreat(Map, now); }
+            try
+            {
+                if (now % 600 == 0) Job.PurgeDeadRefs(Map);
+                Job.TickRetreat(Map, now);
+            }
             catch (Exception e) { Log.WarningOnce("[Hardened Raids] convoy retreat: " + e, 0x48525254); }
         }
     }
@@ -618,7 +672,11 @@ namespace HardenedRaids
             b.SetFaction(faction);
             GenSpawn.Spawn(b, cell, map, def.rotatable ? Rot4.FromAngleFlat(new Vector3(axis.x, 0f, axis.y).AngleFlat()) : Rot4.North);
             Sandbags(map, faction, cell, def, axis);
-            if (b is Building_Turret bt) MapComponent_HostileTurretSupply.DropAmmoNear(bt, 3);
+            if (b is Building_Turret bt)
+            {
+                MapComponent_HostileTurretSupply.Register(bt);   // seule une tourelle du registre est ravitaillée
+                MapComponent_HostileTurretSupply.DropAmmoNear(bt, 3);
+            }
 
             var crew = new List<Pawn>();
             if (b.TryGetComp<CompMannable>() != null)
@@ -686,6 +744,8 @@ namespace HardenedRaids
 
         public LordJob_HRTurretCrew() { }
         public LordJob_HRTurretCrew(Faction f) { faction = f; }
+
+        public override bool LostImportantReferenceDuringLoading => faction == null;
 
         public override StateGraph CreateGraph()
         {
@@ -758,6 +818,9 @@ namespace HardenedRaids
         public LordJob_HRBoard(Faction f, Lord convoy) { faction = f; this.convoy = convoy; }
 
         public override bool AddFleeToil => false;
+
+        /// <summary>Sans faction : lord supprimé au chargement. Sans convoi : on garde le lord (sortie à pied par la duty).</summary>
+        public override bool LostImportantReferenceDuringLoading => faction == null;
 
         public override StateGraph CreateGraph()
         {
@@ -863,8 +926,27 @@ namespace HardenedRaids
             return g;
         }
 
+        /// <summary>Même règle que <see cref="LordJob_HRConvoy.PurgeDeadRefs"/> : pawns / bâtiments détruits, lord du convoi disparu.</summary>
+        public void PurgeDeadRefs(Map map)
+        {
+            foreach (Pawn k in assigned.Keys.Where(k => LordJob_HRConvoy.Gone(k) || LordJob_HRConvoy.Gone(assigned[k])).ToList())
+            {
+                assigned.Remove(k);
+                drivers.Remove(k);   // comme Assign() quand le véhicule n'est plus utilisable
+            }
+            drivers.RemoveWhere(LordJob_HRConvoy.Gone);
+            foreach (Pawn k in pack.Keys.Where(k => LordJob_HRConvoy.Gone(k) || LordJob_HRConvoy.Gone(pack[k])).ToList()) pack.Remove(k);
+            foreach (Pawn k in packStart.Keys.Where(k => LordJob_HRConvoy.Gone(k) || !pack.ContainsKey(k)).ToList()) packStart.Remove(k);
+            if (map != null && convoy != null && !map.lordManager.lords.Contains(convoy)) convoy = null;   // Assign() -> null : sortie à pied
+        }
+
         public override void ExposeData()
         {
+            if (Scribe.mode == LoadSaveMode.Saving)
+            {
+                try { PurgeDeadRefs(lord?.Map); }
+                catch (Exception e) { Log.Warning("[Hardened Raids] boarding save cleanup: " + e.Message); }
+            }
             Scribe_References.Look(ref faction, "faction");
             Scribe_References.Look(ref convoy, "convoy");
             Scribe_Collections.Look(ref assigned, "assigned", LookMode.Reference, LookMode.Reference, ref k1, ref v1);
@@ -895,6 +977,7 @@ namespace HardenedRaids
         public override void LordToilTick()
         {
             if (Find.TickManager.TicksGame % 250 != 0) return;
+            if (Find.TickManager.TicksGame % 1000 == 0 && lord.LordJob is LordJob_HRBoard bj) bj.PurgeDeadRefs(lord.Map);
             // à bord d'un véhicule sorti de la carte : plus rien à faire ici
             foreach (Pawn p in lord.ownedPawns.ToList())
                 if (!p.Dead && p.MapHeld != lord.Map) lord.Notify_PawnLost(p, PawnLostCondition.ExitedMap);

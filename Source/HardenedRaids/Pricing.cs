@@ -88,9 +88,60 @@ namespace HardenedRaids
         public static int NcoCount(int n) => n / 10;
         public static int OfficerCount(int n) => n / 100;
 
-        public static float BodyCost(FactionDef f, TierDef tier) => Tiers.BaseCostFor(f) * tier.bodyMult;
+        /// <summary>
+        /// Prix du corps : base × palier × facteur de xénotype (combatPowerFactor : Sanguophage ×2,5, Néandertalien ×1,6…).
+        /// Le xénotype ne porte que sur le corps : l'équipement vaut la même chose quel que soit son porteur.
+        /// </summary>
+        public static float BodyCost(FactionDef f, TierDef tier, float xenoFactor = 1f) => Tiers.BaseCostFor(f) * tier.bodyMult * xenoFactor;
 
-        public static float Points(float body, float dollars) => (body + dollars / Mathf.Max(1f, HRSettings.ValueDivisor)) * HRSettings.CostFactor;
+        /// <param name="floor">
+        /// Plancher : coût vanilla du même pawnkind (combatPower × xénotype). Un raider Hardened est au moins aussi fort que
+        /// sa version vanilla (sain, skills relevés, équipement de palier), il ne doit donc jamais coûter moins cher qu'elle ;
+        /// le combatPower vanilla comprend déjà son équipement, d'où un plancher sur le total et non un ajout au corps.
+        /// </param>
+        public static float Points(float body, float dollars, float floor = 0f) =>
+            Mathf.Max(body + dollars / Mathf.Max(1f, HRSettings.ValueDivisor), floor) * HRSettings.CostFactor;
+
+        public static float XenoFactor(XenotypeDef x) => ModsConfig.BiotechActive && x != null ? x.combatPowerFactor : 1f;
+
+        /// <summary>Prix d'un raider de ce pawnkind / xénotype pour cet équipement.</summary>
+        public static float KindPrice(FactionDef f, TierDef tier, PawnKindDef kind, XenotypeDef xeno, float dollars)
+        {
+            float xf = XenoFactor(xeno);
+            return Points(BodyCost(f, tier, xf), dollars, (kind?.combatPower ?? 0f) * xf);
+        }
+
+        // ---- répartition attendue des pawnkinds / xénotypes d'une faction (groupes de combat, hors chef unique)
+        private struct KindShare { public PawnKindDef kind; public XenotypeDef xeno; public float weight; }
+        private static readonly Dictionary<FactionDef, List<KindShare>> kindMix = new Dictionary<FactionDef, List<KindShare>>();
+
+        private static List<KindShare> KindMix(FactionDef f)
+        {
+            if (kindMix.TryGetValue(f, out var mix)) return mix;
+            mix = new List<KindShare>();
+            bool xenos = ModsConfig.BiotechActive && f.humanlikeFaction;
+            if (f.pawnGroupMakers != null)
+                foreach (PawnGroupMaker gm in f.pawnGroupMakers)
+                {
+                    if (gm.kindDef != PawnGroupKindDefOf.Combat || gm.options == null) continue;
+                    float total = 0f;
+                    foreach (PawnGenOption o in gm.options) if (Eligible(o)) total += o.selectionWeight;
+                    if (total <= 0f) continue;
+                    foreach (PawnGenOption o in gm.options)
+                    {
+                        if (!Eligible(o)) continue;
+                        float w = gm.commonality * o.selectionWeight / total;
+                        if (!xenos) { mix.Add(new KindShare { kind = o.kind, weight = w }); continue; }
+                        // copie : XenotypesAvailableFor renvoie un dictionnaire partagé
+                        foreach (KeyValuePair<XenotypeDef, float> x in PawnGenerator.XenotypesAvailableFor(o.kind, f).ToList())
+                            mix.Add(new KindShare { kind = o.kind, xeno = x.Key, weight = w * x.Value });
+                    }
+                }
+            kindMix[f] = mix;
+            return mix;
+
+            static bool Eligible(PawnGenOption o) => o.kind != null && o.kind.isFighter && !o.kind.factionLeader && o.kind.RaceProps != null && o.kind.RaceProps.Humanlike;
+        }
 
         public static float GearValue(Loadout lo, Role role)
         {
@@ -124,17 +175,38 @@ namespace HardenedRaids
             float dollars = AverageGearValue(lo, tier) * qf + Loadouts.ExpectedImplantValue(f, tier);
             ThingDef brain = Tiers.IsLowTech(f) ? null : Loadouts.PickCyberbrain(tier.cyberbrainRank);
             if (brain != null) dollars += brain.BaseMarketValue;
-            return Points(BodyCost(f, tier), dollars);
+            // espérance sur les pawnkinds / xénotypes que la faction enverra (xénotype et plancher vanilla par pawnkind)
+            List<KindShare> mix = KindMix(f);
+            float sum = 0f, wsum = 0f;
+            foreach (KindShare k in mix)
+            {
+                sum += k.weight * KindPrice(f, tier, k.kind, k.xeno, dollars);
+                wsum += k.weight;
+            }
+            return wsum > 0f ? sum / wsum : Points(BodyCost(f, tier), dollars);
         }
 
-        /// <summary>Prix exact d'un raider une fois son grade, son rôle et ses implants connus (qualité : espérance du grade).</summary>
-        public static float SlotPrice(Slot s)
+        /// <summary>
+        /// Prix d'un raider une fois son grade, son rôle et ses implants connus (qualité : espérance du grade).
+        /// Avec le pawn généré : xénotype réel et seulement les pièces réellement posées (dotation, membres remplacés,
+        /// techHediffsRequired du pawnkind) ; sans : ce qui est prévu.
+        /// </summary>
+        public static float SlotPrice(Slot s, Pawn pawn = null)
         {
             int len = Tiers.LadderFor(s.faction.def).Length;
             float dollars = GearValue(s.loadout, s.role) * QualityModel.ExpectedValueFactor(s.rank, s.tierIndex, len);
-            if (s.implants != null) dollars += s.implants.Sum(d => d.BaseMarketValue);
-            if (s.brain != null) dollars += s.brain.BaseMarketValue;
-            return Points(BodyCost(s.faction.def, s.tier), dollars);
+            if (pawn != null)
+            {
+                if (s.installed != null) dollars += s.installed.Sum(d => d.BaseMarketValue);
+                if (s.required != null) dollars += s.required.Sum(d => d.BaseMarketValue);
+            }
+            else
+            {
+                if (s.implants != null) dollars += s.implants.Sum(d => d.BaseMarketValue);
+                if (s.brain != null) dollars += s.brain.BaseMarketValue;
+            }
+            XenotypeDef xeno = pawn?.genes?.Xenotype ?? s.xenotype;
+            return KindPrice(s.faction.def, s.tier, s.kind, xeno, dollars);
         }
     }
 
@@ -206,35 +278,149 @@ namespace HardenedRaids
         }
     }
 
-    /// <summary>Mécanoïdes blindés : prix multiplié et blocage C, appliqués pendant la génération du groupe.</summary>
+    /// <summary>
+    /// Mécanoïdes blindés : prix multiplié et blocage C. Deux usages :
+    /// - portée (Push / Pop) : combatPower des pawnkinds modifié le temps d'une génération (groupes, grappes, capsules) ;
+    ///   pile de portées, sûre en cas d'imbrication (chaque Pop rend exactement ce que son Push a changé) ;
+    /// - calcul sans modification (Cost / WeightFactor) pour les chemins qui choisissent eux-mêmes (mécas endormis, assembleurs).
+    /// Seulement pour les factions hostiles au joueur : jamais les mécas du joueur (mécanitor) ni les alliés.
+    /// </summary>
     public static class MechPricing
     {
         public const float HeavyRatio = 0.75f;   // ≥ 75 % de l'armure de marine (CE : 15 mm)
-        private static readonly Dictionary<PawnKindDef, float> saved = new Dictionary<PawnKindDef, float>();
+        public const float BlockedCost = 1e6f;   // hors de prix = jamais choisi
 
-        public static bool IsHeavy(PawnKindDef k) =>
-            k?.race != null && k.RaceProps.IsMechanoid && ArmorGate.Ratio(k.race, null) >= HeavyRatio;
-
-        public static void Apply(PawnGroupMakerParms parms, PawnGroupMaker groupMaker)
+        private sealed class Frame
         {
-            Restore();
-            if (parms?.faction == null || parms.faction.def.humanlikeFaction || groupMaker?.options == null) return;
-            ArmorGate gate = ArmorGate.For(parms.points);
-            foreach (PawnKindDef k in groupMaker.options.Select(o => o.kind).Distinct())
-            {
-                if (!IsHeavy(k)) continue;
-                saved[k] = k.combatPower;
-                if (gate != null && !gate.AllowsMech(k.race)) k.combatPower = 1e6f;      // hors de prix = jamais choisi
-                else k.combatPower *= HRSettings.HeavyMechCostFactor;
-            }
-            if (saved.Count > 0)
-                HRLog.Msg($"mécanoïdes blindés ({parms.points:F0} pts) : " + string.Join(", ", saved.Keys.Select(k => k.combatPower >= 1e6f ? $"{k.defName} bloqué" : $"{k.defName} {k.combatPower:F0} pts")));
+            public float points;
+            public readonly List<KeyValuePair<PawnKindDef, float>> prev = new List<KeyValuePair<PawnKindDef, float>>();
         }
 
-        public static void Restore()
+        private static readonly Dictionary<PawnKindDef, bool> heavyCache = new Dictionary<PawnKindDef, bool>();
+        private static readonly Dictionary<PawnKindDef, float> original = new Dictionary<PawnKindDef, float>();  // valeur vanilla tant qu'une portée est active
+        private static readonly List<Frame> frames = new List<Frame>();
+
+        public static bool Active => frames.Count > 0;
+
+        public static bool IsHeavy(PawnKindDef k)
         {
-            foreach (KeyValuePair<PawnKindDef, float> kv in saved) kv.Key.combatPower = kv.Value;
-            saved.Clear();
+            if (k?.race == null || !k.RaceProps.IsMechanoid) return false;
+            if (!heavyCache.TryGetValue(k, out bool h))
+            {
+                h = ArmorGate.Ratio(k.race, null) >= HeavyRatio;
+                heavyCache[k] = h;
+            }
+            return h;
+        }
+
+        public static bool HostileToPlayer(Faction f) => f != null && f != Faction.OfPlayer && Faction.OfPlayer != null && f.HostileTo(Faction.OfPlayer);
+
+        /// <summary>combatPower vanilla (même pendant une portée active).</summary>
+        public static float OriginalPower(PawnKindDef k) => original.TryGetValue(k, out float v) ? v : k.combatPower;
+
+        /// <summary>Prix Hardened d'un pawnkind, sans rien modifier.</summary>
+        public static float Cost(PawnKindDef k, ArmorGate gate)
+        {
+            float b = OriginalPower(k);
+            if (!IsHeavy(k)) return b;
+            if (gate != null && !gate.AllowsMech(k.race)) return BlockedCost;
+            return b * HRSettings.HeavyMechCostFactor;
+        }
+
+        /// <summary>Facteur de poids pour un choix uniforme (assembleur, groupe aléatoire) : 1 / prix relatif, 0 si bloqué.</summary>
+        public static float WeightFactor(PawnKindDef k, ArmorGate gate)
+        {
+            if (!IsHeavy(k)) return 1f;
+            if (gate != null && !gate.AllowsMech(k.race)) return 0f;
+            return 1f / Mathf.Max(1f, HRSettings.HeavyMechCostFactor);
+        }
+
+        /// <summary>
+        /// Points de menace qui règlent le blocage hors raid : ceux de la portée active, sinon la carte si c'est une colonie,
+        /// sinon le monde. Jamais pendant un chargement (monde incomplet) : -1 = ne pas appliquer.
+        /// </summary>
+        public static float ThreatPointsFor(Map map)
+        {
+            if (frames.Count > 0) return frames[frames.Count - 1].points;   // DefaultThreatPointsNow lit le combatPower des mécas de colonie
+            if (Scribe.mode != LoadSaveMode.Inactive || Current.ProgramState != ProgramState.Playing) return -1f;
+            try
+            {
+                IIncidentTarget t = map != null && map.IsPlayerHome ? map : (IIncidentTarget)Find.World;
+                return t == null ? -1f : StorytellerUtility.DefaultThreatPointsNow(t);
+            }
+            catch (Exception e)
+            {
+                Log.WarningOnce("[Hardened Raids] mech pricing points: " + e.Message, 0x48524D50);
+                return -1f;
+            }
+        }
+
+        /// <summary>Groupe d'une faction non humaine hostile : portée de prix sur ses options.</summary>
+        public static bool Apply(PawnGroupMakerParms parms, PawnGroupMaker groupMaker)
+        {
+            if (parms?.faction == null || parms.faction.def.humanlikeFaction || groupMaker?.options == null) return false;
+            if (!HostileToPlayer(parms.faction)) return false;
+            return Push(groupMaker.options.Select(o => o.kind), parms.points);
+        }
+
+        /// <summary>
+        /// Ouvre une portée : prix / blocage des mécanoïdes blindés parmi ces pawnkinds. true = portée ouverte, à fermer par Pop()
+        /// (dans un finalizer / finally). Ne lève jamais d'exception.
+        /// </summary>
+        public static bool Push(IEnumerable<PawnKindDef> kinds, float points)
+        {
+            if (kinds == null) return false;
+            Frame fr = null;
+            try
+            {
+                ArmorGate gate = null;
+                bool gateDone = false;
+                foreach (PawnKindDef k in kinds)
+                {
+                    if (!IsHeavy(k)) continue;
+                    if (fr != null && fr.prev.Any(kv => kv.Key == k)) continue;
+                    if (!gateDone) { gate = ArmorGate.For(points); gateDone = true; }
+                    fr ??= new Frame { points = points };
+                    if (!original.ContainsKey(k)) original[k] = k.combatPower;
+                    fr.prev.Add(new KeyValuePair<PawnKindDef, float>(k, k.combatPower));
+                    k.combatPower = Cost(k, gate);
+                }
+                if (fr == null) return false;
+                frames.Add(fr);
+            }
+            catch (Exception e)
+            {
+                if (fr != null) Undo(fr);
+                if (frames.Count == 0) RestoreAll();
+                Log.Warning("[Hardened Raids] mechanoid pricing: " + e.Message);
+                return false;
+            }
+            HRLog.Msg($"mécanoïdes blindés ({points:F0} pts) : " + string.Join(", ", fr.prev.Select(kv =>
+                kv.Key.combatPower >= BlockedCost ? $"{kv.Key.defName} bloqué" : $"{kv.Key.defName} {kv.Key.combatPower:F0} pts")));
+            return true;
+        }
+
+        /// <summary>Ferme la dernière portée ouverte.</summary>
+        public static void Pop()
+        {
+            if (frames.Count == 0) return;
+            Frame fr = frames[frames.Count - 1];
+            frames.RemoveAt(frames.Count - 1);
+            Undo(fr);
+            if (frames.Count == 0) RestoreAll();
+        }
+
+        private static void Undo(Frame fr)
+        {
+            for (int i = fr.prev.Count - 1; i >= 0; i--) fr.prev[i].Key.combatPower = fr.prev[i].Value;
+        }
+
+        /// <summary>Filet de sécurité : remet toutes les valeurs vanilla et vide la pile.</summary>
+        public static void RestoreAll()
+        {
+            foreach (KeyValuePair<PawnKindDef, float> kv in original) kv.Key.combatPower = kv.Value;
+            original.Clear();
+            frames.Clear();
         }
     }
 }

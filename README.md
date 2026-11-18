@@ -8,12 +8,18 @@ Vanilla scales raids by adding more and more poorly equipped raiders. Hardened R
 
 ## Features
 
-- **No points cap**: the 10,000 points cap is removed and the wealth → points curves continue beyond 1M.
+- **No points cap**: the 10,000 points cap is removed and the wealth → points curves (per wealth, per colonist) continue beyond 1M.
 - **Equipment tiers**: T1 to T6 for industrial+ factions, N1 to N5 for tribal/medieval ones. Each tier raises health, skills, armor, weapons and implants.
 - **Value-based pricing**: a raider costs its body plus the market value of everything it carries (quality, implants, cyberbrain). Quality depends on rank: 1 NCO per 10 raiders, 1 officer per 100. Masterwork and legendary gear stay rare.
-- **Uniform loadouts**: one weapon set and one ammo type per raid, taken from the faction's own item tables. Melee sidearms replace Simple Sidearms' random junk.
+- **Uniform loadouts**: one weapon set per raid, taken from the faction's own item tables. Melee sidearms replace Simple Sidearms' random junk.
 - **Armor gate**: strong armor and armored mechanoids are capped by raid points, and spacer armor only shows up once your colony has researched spacer tech.
-- **Waves**: up to 100 raiders per wave (industrial+) or 300 (neolithic/medieval); bigger raids arrive in several waves.
+- **Waves**: up to 100 raiders per wave (industrial+) or 300 (neolithic/medieval); bigger raids arrive in several waves, with the same gear, vehicles spread across waves, and quest links kept. Mechanoid raids and infestations are capped per wave too, and the cap stays even with equipment tiers disabled. Hostile groups outside raids come in a single group capped at the per-wave cap (twice that cap for bases you attack); the surplus is lost.
+- **Everything uncapped, not only raids**: quest and site threats (bandit camps, relic hunts, ancient complexes, sleeping mechs…) keep vanilla values up to 10,000 points, then scale with the ratio vanilla has at 10,000, and hostile groups outside raids (crashed shuttle, caravan ambushes, sites, peace talks) get Hardened gear.
+- **Faction bases you attack** (hostile, and also neutral or allied ones): defenders scale with your threat (25% by default, at most twice the per-wave cap), with modded perimeter turrets, mortars manned by Hardened defenders (at most 1 crew per 10 defenders, vanilla crews beyond) and, with Vehicle Framework, parked combat vehicles.
+- **Mech clusters**: no 10,000 cap; big clusters are split into several clusters (some delayed) so the game never freezes (at most 10 per event, the surplus is lost); cluster turrets cost more.
+- **Anomaly entities** (sightstealers, gorehulks, devourers, chimeras, fleshbeasts, noctols…): capped at the neolithic wave cap (300 by default); the extra entities walk in later in waves, or are discarded if you uncheck the option. Entity attacks get rarer when your threat exceeds what one wave can spend.
+- **Duplicator obelisk** (Anomaly): duplicates scale with your threat but are capped at the per-wave cap (100 by default).
+- **Manhunter packs**: up to the neolithic wave cap (300 by default); animal events get rarer when your threat exceeds what they can spend.
 - **Smarter AI**: smart, breach and sapper raids become more common at high tiers, veterans avoid turret fields of fire, and turrets that are out of service (no power, empty magazine, no fuel) are ignored.
 - **Reinforced sieges**: artillery and turrets from mods (Fortifications, VFE Security, CE Armory...), trenches facing your base, and forward support teams during assaults.
 - **Enemy vehicles** (experimental, needs Vehicle Framework + Vanilla Vehicles Expanded): tanks, rocket and artillery fire support, trucks and IFVs, with crews, ammo and fuel. Vehicles are priced by value; rocket swarms and artillery cost much more.
@@ -31,6 +37,12 @@ Every feature can be tuned or disabled in the mod settings.
 3. Enable **Harmony**, then **Hardened Raids** below it (and below Combat Extended / Vehicle Framework if you use them).
 
 The compiled mod (`Assemblies/HardenedRaids.dll`) is included, no build needed.
+
+## Uninstalling
+
+Removing the mod does not break your save. Outside a raid you can simply remove it: the log will show harmless red errors (the game drops the mod's tier markers and pending waves by itself). During a raid, Hardened convoys and crews lose their group AI.
+
+For a clean removal, open Mod settings → Hardened Raids → **Prepare to remove the mod** (in game): a raid in progress continues as a vanilla raid (infantry and turret crews assault, armed vehicles keep fighting under Vehicle Framework's AI, other vehicles leave, immobilized ones stay in place, captives aboard are dropped), pending waves are cancelled and the mod's markers are removed. Then save, quit, and remove the mod before loading that save.
 
 ## Compatibility
 
