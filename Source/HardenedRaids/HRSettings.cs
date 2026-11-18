@@ -43,6 +43,7 @@ namespace HardenedRaids
         public static bool SiegeUpgrade = true;
         public static int MaxSiegeArtillery = 8;
         public static int MaxSiegeTurrets = 6;
+        public static bool SiegeHoldUnderFire = true;   // les blessures ne lancent plus l'assaut des camps améliorés
         public static bool EnableVehicles = true;
         public static float VehiclePointShare = 0.25f; // part max des points dépensée en véhicules
         public static float VehicleMinTier = 3f;
@@ -96,6 +97,7 @@ namespace HardenedRaids
             Scribe_Values.Look(ref SiegeUpgrade, "SiegeUpgrade", true);
             Scribe_Values.Look(ref MaxSiegeArtillery, "MaxSiegeArtillery", 8);
             Scribe_Values.Look(ref MaxSiegeTurrets, "MaxSiegeTurrets", 6);
+            Scribe_Values.Look(ref SiegeHoldUnderFire, "SiegeHoldUnderFire", true);
             Scribe_Values.Look(ref EnableVehicles, "EnableVehicles", true);
             Scribe_Values.Look(ref VehiclePointShare, "VehiclePointShare", 0.25f);
             Scribe_Values.Look(ref VehicleMinTier, "VehicleMinTier", 3f);
@@ -209,6 +211,7 @@ namespace HardenedRaids
             l.CheckboxLabeled(Strings.T("SiegeUpgrade"), ref SiegeUpgrade);
             MaxSiegeArtillery = (int)l.SliderLabeled(Strings.T("SiegeArtillery", MaxSiegeArtillery), MaxSiegeArtillery, 2, 16, 0.5f);
             MaxSiegeTurrets = (int)l.SliderLabeled(Strings.T("SiegeTurrets", MaxSiegeTurrets), MaxSiegeTurrets, 0, 12, 0.5f);
+            l.CheckboxLabeled(Strings.T("SiegeHold"), ref SiegeHoldUnderFire, Strings.T("SiegeHoldTip"));
             l.CheckboxLabeled(Strings.T("SupportTeams"), ref EnableSupportTeams, Strings.T("SupportTeamsTip"));
             SupportMinTier = Mathf.Round(l.SliderLabeled(Strings.T("SupportMinTier", SupportMinTier.ToString("F0")), SupportMinTier, 1f, 6f, 0.5f));
             SupportShare = Mathf.Round(l.SliderLabeled(Strings.T("SupportShare", SupportShare.ToString("P0")), SupportShare, 0.05f, 0.4f, 0.5f) * 20f) / 20f;
