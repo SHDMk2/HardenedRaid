@@ -17,7 +17,8 @@ namespace HardenedRaids
     /// </summary>
     /// <summary>
     /// Palier du camp de siège = palier forcé du raid (A5), pas les points du lord. Retenu par lord de siège (table
-    /// faible, non sauvegardée) et lu pendant LordToil_Siege.Init, où les plans sont posés.
+    /// faible, non sauvegardée) et lu pendant LordToil_Siege.Init, où les plans sont posés, avec l'effectif du
+    /// groupe et le type de camp (siège ou équipe d'appui).
     /// </summary>
     public static class SiegeTier
     {
@@ -27,6 +28,12 @@ namespace HardenedRaids
 
         /// <summary>Palier du siège dont on pose le camp, -1 sinon.</summary>
         public static float Current = -1f;
+
+        /// <summary>Effectif du groupe dont on pose le camp (0 hors de LordToil_Siege.Init).</summary>
+        public static int Raiders;
+
+        /// <summary>Camp d'une équipe d'appui (pendant LordToil_Siege.Init).</summary>
+        public static bool Support;
 
         /// <summary>À appeler par qui crée un LordJob_Siege dont le palier est connu (raid, équipe d'appui).</summary>
         public static void Register(Verse.AI.Group.LordJob job, float tierX)
@@ -51,54 +58,57 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(LordToil_Siege), nameof(LordToil_Siege.Init))]
     public static class Patch_SiegeInitTier
     {
-        public static void Prefix(LordToil_Siege __instance) => SiegeTier.Current = SiegeTier.For(__instance.lord?.LordJob);
-        public static void Finalizer() => SiegeTier.Current = -1f;
+        public static void Prefix(LordToil_Siege __instance)
+        {
+            Verse.AI.Group.Lord l = __instance.lord;
+            SiegeTier.Current = SiegeTier.For(l?.LordJob);
+            SiegeTier.Raiders = l?.ownedPawns.Count ?? 0;
+            SiegeTier.Support = l?.Map != null && MapComponent_HostileTurretSupply.For(l.Map)?.IsSupportLord(l) == true;
+        }
+
+        public static void Finalizer()
+        {
+            SiegeTier.Current = -1f;
+            SiegeTier.Raiders = 0;
+            SiegeTier.Support = false;
+        }
     }
 
     [HarmonyPatch(typeof(SiegeBlueprintPlacer), nameof(SiegeBlueprintPlacer.PlaceBlueprints))]
     public static class Patch_SiegeBlueprints
     {
-        private static readonly MethodInfo findArtySpot = AccessTools.Method(typeof(SiegeBlueprintPlacer), "FindArtySpot");
-        private static readonly MethodInfo canPlaceAt = AccessTools.Method(typeof(SiegeBlueprintPlacer), "CanPlaceBlueprintAt");
-        private static readonly MethodInfo clearHostilePlans = AccessTools.Method(typeof(SiegeBlueprintPlacer), "ClearHostilePlansAt");
-
         public static void Postfix(IntVec3 placeCenter, Map map, Faction placeFaction, float points, ref IEnumerable<Blueprint_Build> __result)
         {
-            if (!HRSettings.SiegeUpgrade || placeFaction == null || findArtySpot == null || canPlaceAt == null) return;
+            if (!HRSettings.SiegeUpgrade || placeFaction == null) return;
             __result = Extend(__result, placeCenter, map, placeFaction, points);
         }
 
+        /// <summary>
+        /// Palier 2+ : plan du camp (<see cref="SiegeCamp.PlacePieces"/>) à la place de l'artillerie vanilla posée au
+        /// hasard. La couverture vient plus tard, quand les pièces sont construites (<see cref="Patch_SiegeCoverLater"/>).
+        /// </summary>
         private static IEnumerable<Blueprint_Build> Extend(IEnumerable<Blueprint_Build> vanilla, IntVec3 center, Map map, Faction faction, float blueprintPoints)
         {
-            var pieces = new List<Blueprint_Build>();
-            foreach (Blueprint_Build b in vanilla)   // vanilla : seulement l'artillerie (sa couverture est désactivée plus bas)
-            {
-                if (b.def.entityDefToBuild is ThingDef td && td.building?.turretGunDef != null) pieces.Add(b);
-                yield return b;
-            }
-
+            List<Blueprint_Build> vanillaArty = vanilla.ToList();   // vanilla : seulement l'artillerie (sa couverture est désactivée plus bas)
             // palier forcé du raid (SiegeTier) ; à défaut (camp posé après un rechargement…), estimé depuis
             // blueprintPoints = points du raid × 0.2-0.3 (RaidStrategyWorker_Siege / équipe d'appui)
             float x = SiegeTier.Current >= 0f ? SiegeTier.Current : Tiers.TierX(faction.def, blueprintPoints * 4f);
-            IntVec3 target = ThreatTarget(map, center);
-            Rot4 facing = Rot4.FromAngleFlat((target - center).AngleFlat);
-            var extras = new List<Blueprint_Build>();
-            try
+            List<Blueprint_Build> plan = null;
+            if (x >= 2f)
             {
-                if (x >= 2f)
+                try
                 {
-                    PlaceArtillery(extras, pieces, map, faction, x, pieces.Count(b => IsArtillery((ThingDef)b.def.entityDefToBuild)), facing);
-                    PlaceTurrets(extras, pieces, map, faction, x, facing);
+                    int raiders = SiegeTier.Raiders > 0 ? SiegeTier.Raiders : 10;
+                    plan = SiegeCamp.PlacePieces(map, faction, center, x, raiders, SiegeTier.Support, vanillaArty, ThreatTarget(map, center));
                 }
-                pieces.AddRange(extras);
-                PlaceCover(extras, map, faction, center, target, x, pieces);
+                catch (Exception e)
+                {
+                    Log.Warning("[Hardened Raids] siege camp: " + e);
+                }
             }
-            catch (Exception e)
-            {
-                Log.Warning("[Hardened Raids] siege camp: " + e);
-            }
-            HRLog.Msg($"siège {faction.Name} (palier {x:F1}) vers {target} : +{extras.Count} plans ({string.Join(", ", extras.GroupBy(b => b.def.entityDefToBuild.label).Select(g => g.Count() + "× " + g.Key))})");
-            foreach (Blueprint_Build b in extras) yield return b;
+            else HRLog.Msg($"siège {faction.Name} (palier {x:F1}) : artillerie vanilla ({vanillaArty.Count} pièce(s)).");
+            foreach (Blueprint_Build b in plan ?? vanillaArty)
+                if (!b.Destroyed) yield return b;
         }
 
         // ------------------------------------------------------------ catalogues
@@ -170,7 +180,7 @@ namespace HardenedRaids
         /// Pas au-dessus du niveau de la faction ; et une armée industrielle ou plus n'aligne pas de baliste ni de
         /// pierrier : plancher industriel.
         /// </summary>
-        private static bool TechOk(ThingDef d, Faction f)
+        public static bool TechOk(ThingDef d, Faction f)
         {
             TechLevel t = EffectiveTech(d);
             if (t == TechLevel.Undefined) return true;
@@ -235,7 +245,7 @@ namespace HardenedRaids
                     || (Contains(d.defName, "Sandbag") && Contains(d.defName, "Wall")))).ToList();
             coverDefs.RemoveAll(parapetDefs.Contains);
             HRLog.Msg($"siège : catalogue — {artilleryDefs.Count} artilleries ({string.Join(", ", artilleryDefs.Select(d => d.defName))}), "
-                      + $"{turretDefs.Count} tourelles ({turretDefs.Count(d => d.HasComp(typeof(CompMannable)))} servies : {string.Join(", ", turretDefs.Select(d => d.defName))}), "
+                      + $"{turretDefs.Count} tourelles ({turretDefs.Count(d => d.HasComp<CompMannable>())} servies : {string.Join(", ", turretDefs.Select(d => d.defName))}), "
                       + $"anti-aériens écartés ({string.Join(", ", antiAir.Select(d => d.defName))}), "
                       + $"couvertures ({string.Join(", ", coverDefs.Select(d => d.defName))}), parapets ({string.Join(", ", parapetDefs.Select(d => d.defName))}).");
         }
@@ -250,6 +260,13 @@ namespace HardenedRaids
             return parapetDefs.Where(d => TechOk(d, f)
                 && !(f.def.techLevel >= TechLevel.Industrial && d.stuffCategories != null && d.stuffCategories.Count > 0
                      && d.stuffCategories.All(c => c == StuffCategoryDefOf.Woody))).ToList();
+        }
+
+        /// <summary>Sac de sable ou parapet du catalogue (couverture d'un camp).</summary>
+        public static bool IsCatalogCover(ThingDef d)
+        {
+            EnsureCatalog();
+            return coverDefs.Contains(d) || parapetDefs.Contains(d);
         }
 
         public static List<ThingDef> CoverDefsFor(Faction f)
@@ -271,7 +288,7 @@ namespace HardenedRaids
             return turretDefs.Where(d => TechOk(d, f) && d.size.x <= maxSize && d.size.z <= maxSize).ToList();
         }
 
-        private static ThingDef StuffFor(ThingDef d) => d.MadeFromStuff ? (GenStuff.AllowedStuffsFor(d).Contains(ThingDefOf.Steel) ? ThingDefOf.Steel : GenStuff.DefaultStuffFor(d)) : null;
+        public static ThingDef StuffFor(ThingDef d) => d.MadeFromStuff ? (GenStuff.AllowedStuffsFor(d).Contains(ThingDefOf.Steel) ? ThingDefOf.Steel : GenStuff.DefaultStuffFor(d)) : null;
 
         /// <summary>Plus le palier est haut, plus on favorise le matériel cher (gros calibres).</summary>
         public static ThingDef PickWeighted(List<ThingDef> defs, float x)
@@ -280,51 +297,9 @@ namespace HardenedRaids
             return defs.TryRandomElementByWeight(d => Mathf.Pow(Mathf.Max(50f, d.BaseMarketValue), exp), out ThingDef r) ? r : null;
         }
 
-        private static bool TryPlace(List<Blueprint_Build> output, List<Blueprint_Build> others, ThingDef def, Map map, Faction faction, Rot4 rot)
-        {
-            if (!def.rotatable) rot = Rot4.North;
-            // FindArtySpot vanilla ignore les cases de servant : on retire au sort tant que la case du servant est
-            // bouchée ou que la pièce recouvre celle d'une autre
-            IntVec3 spot = IntVec3.Invalid;
-            for (int i = 0; i < 12 && !spot.IsValid; i++)
-            {
-                var c = (IntVec3)findArtySpot.Invoke(null, new object[] { def, rot, map });
-                if (!c.IsValid) return false;
-                if (InteractionOk(def, c, rot, map, others.Concat(output))) spot = c;
-            }
-            if (!spot.IsValid) return false;
-            ThingDef stuff = StuffFor(def);
-            clearHostilePlans?.Invoke(null, new object[] { spot, rot, def, stuff ?? ThingDefOf.Steel, map });
-            output.Add(GenConstruct.PlaceBlueprintForBuild(def, spot, map, rot, faction, stuff));
-            return true;
-        }
-
-        private static CellRect Body(Blueprint_Build b) => GenAdj.OccupiedRect(b.Position, b.Rotation, ((ThingDef)b.def.entityDefToBuild).size);
-
         /// <summary>Case du servant d'un plan de pièce (Invalid si la pièce n'en a pas).</summary>
         public static IntVec3 GunnerCell(Blueprint_Build b, Map map) =>
             b.def.entityDefToBuild is ThingDef d && d.hasInteractionCell ? ThingUtility.InteractionCellWhenAt(d, b.Position, b.Rotation, map) : IntVec3.Invalid;
-
-        /// <summary>Case du servant praticable, hors des autres pièces ; la pièce ne recouvre pas le poste d'une autre.</summary>
-        private static bool InteractionOk(ThingDef def, IntVec3 at, Rot4 rot, Map map, IEnumerable<Blueprint_Build> others)
-        {
-            CellRect mine = GenAdj.OccupiedRect(at, rot, def.size);
-            IntVec3 ic = def.hasInteractionCell ? ThingUtility.InteractionCellWhenAt(def, at, rot, map) : IntVec3.Invalid;
-            if (ic.IsValid)
-            {
-                if (!ic.InBounds(map) || !ic.Walkable(map)) return false;
-                Building e = ic.GetEdifice(map);
-                if (e != null && !mine.Contains(ic) && e.def.passability != Traversability.Standable) return false;
-            }
-            foreach (Blueprint_Build o in others)
-            {
-                if (o == null || o.Destroyed || o.def.entityDefToBuild is not ThingDef) continue;
-                if (ic.IsValid && Body(o).Contains(ic)) return false;
-                IntVec3 oic = GunnerCell(o, map);
-                if (oic.IsValid && mine.Contains(oic)) return false;
-            }
-            return true;
-        }
 
         /// <summary>La cible du siège : le bâtiment du joueur le plus proche du camp.</summary>
         public static IntVec3 ThreatTarget(Map map, IntVec3 from)
@@ -339,107 +314,6 @@ namespace HardenedRaids
             return best?.Position ?? map.Center;
         }
 
-        // ------------------------------------------------------------ placement
-        private static void PlaceArtillery(List<Blueprint_Build> output, List<Blueprint_Build> others, Map map, Faction faction, float x, int already, Rot4 facing)
-        {
-            List<ThingDef> defs = ArtilleryDefsFor(faction);
-            if (defs.Count == 0) return;
-            int target = Mathf.Min(HRSettings.MaxSiegeArtillery, 1 + Mathf.RoundToInt(x * 1.2f));
-            // NoArtillery vanilla : sans aucune pièce au tag de bâtiment « Artillery », l'assaut part dès la fin du chantier
-            bool tagged = others.Concat(output).Any(b => HasArtilleryTag(b.def.entityDefToBuild as ThingDef));
-            for (int i = already; i < target; i++)
-            {
-                List<ThingDef> pool = tagged ? defs : defs.Where(HasArtilleryTag).ToList();
-                if (pool.Count == 0) pool = defs;
-                ThingDef def = PickWeighted(pool, x);
-                if (def == null) break;
-                if (!TryPlace(output, others, def, map, faction, facing))
-                {
-                    // pièce trop grosse pour la place restante : la plus petite du catalogue avant d'abandonner
-                    ThingDef small = pool.Where(d => d != def).OrderBy(d => d.size.Area).FirstOrDefault();
-                    if (small == null || small.size.Area >= def.size.Area || !TryPlace(output, others, small, map, faction, facing)) break;
-                    def = small;
-                }
-                tagged |= HasArtilleryTag(def);
-            }
-        }
-
-        private static void PlaceTurrets(List<Blueprint_Build> output, List<Blueprint_Build> others, Map map, Faction faction, float x, Rot4 facing)
-        {
-            EnsureCatalog();
-            List<ThingDef> kit = ChooseKit(turretDefs.Where(d => TechOk(d, faction)).ToList(), x);
-            if (kit.Count == 0) return;
-            HRLog.Msg($"siège : dotation {string.Join(" + ", kit.Select(d => d.label))}.");
-            int n = Mathf.Clamp(Mathf.RoundToInt((x - 1.5f) * 1.5f), 1, HRSettings.MaxSiegeTurrets);
-            for (int i = 0; i < n; i++)
-            {
-                ThingDef def = kit[i % kit.Count];
-                if (def == null) break;
-                if (TryPlace(output, others, def, map, faction, facing)) continue;
-                // la lourde ne trouve pas de place : la légère (kit[0]) avant d'abandonner
-                if (def == kit[0] || !TryPlace(output, others, kit[0], map, faction, facing)) break;
-            }
-        }
-
-        /// <summary>
-        /// Lignes de couverture perpendiculaires à la direction de la base, devant le camp (plusieurs rangées avec
-        /// des passages), plus un parapet devant chaque pièce d'artillerie / tourelle.
-        /// </summary>
-        private static void PlaceCover(List<Blueprint_Build> output, Map map, Faction faction, IntVec3 center, IntVec3 target, float x, List<Blueprint_Build> pieces)
-        {
-            List<ThingDef> defs = CoverDefsFor(faction);
-            ThingDef cover = defs.Count > 0 ? defs.RandomElement() : ThingDefOf.Sandbags;   // une seule sorte par camp
-            ThingDef stuff = cover == ThingDefOf.Sandbags ? ThingDefOf.Cloth : StuffFor(cover);
-            List<ThingDef> walls = ParapetDefsFor(faction);
-            ThingDef wall = walls.Count > 0 ? walls.RandomElement() : null;   // parapet des pièces d'artillerie
-            ThingDef wallStuff = wall != null ? StuffFor(wall) : null;
-
-            Vector2 dir = new Vector2(target.x - center.x, target.z - center.z);
-            dir = dir.sqrMagnitude < 1f ? Vector2.right : dir.normalized;
-            Vector2 perp = new Vector2(-dir.y, dir.x);
-            var done = new HashSet<IntVec3>();
-            // CanPlaceBlueprintAt vanilla ignore les cases de servant : jamais de couverture sur le poste d'une pièce
-            foreach (Blueprint_Build b in pieces)
-            {
-                IntVec3 ic = GunnerCell(b, map);
-                if (ic.IsValid) done.Add(ic);
-            }
-
-            // sacs 1×2 : le grand côté le long de la ligne (rotation tournée vers la base)
-            Rot4 rot = cover.rotatable ? Rot4.FromAngleFlat(new Vector3(dir.x, 0f, dir.y).AngleFlat()) : Rot4.North;
-
-            void Line(Vector2 mid, int half, int gapEvery, ThingDef def, ThingDef st)
-            {
-                Rot4 r = def.rotatable ? rot : Rot4.North;
-                for (int t = -half; t <= half; t++)
-                {
-                    if (gapEvery > 0 && t != 0 && t % gapEvery == 0) continue; // passages pour sortir
-                    Vector2 p = mid + perp * t;
-                    var c = new IntVec3(Mathf.RoundToInt(p.x), 0, Mathf.RoundToInt(p.y));
-                    if (!c.InBounds(map)) continue;
-                    CellRect body = GenAdj.OccupiedRect(c, r, def.size);
-                    if (!body.InBounds(map) || body.Cells.Any(done.Contains)) continue;
-                    if (!(bool)canPlaceAt.Invoke(null, new object[] { c, r, def, map, st })) continue;
-                    foreach (IntVec3 bc in body) done.Add(bc);
-                    output.Add(GenConstruct.PlaceBlueprintForBuild(def, c, map, r, faction, st));
-                }
-            }
-
-            var origin = new Vector2(center.x, center.z);
-            // rangées du camp, face à la base
-            int rows = Mathf.Clamp(1 + Mathf.RoundToInt(x / 2f), 1, 4);
-            for (int r = 0; r < rows; r++)
-                Line(origin + dir * (7f + 3f * r), 5 + r + Mathf.RoundToInt(x / 2f), 6, cover, stuff);
-            // parapet devant chaque pièce : mur de sacs / embrasure devant l'artillerie, sacs devant les tourelles
-            foreach (Blueprint_Build b in pieces)
-            {
-                ThingDef d = (ThingDef)b.def.entityDefToBuild;
-                float s = Mathf.Max(d.size.x, d.size.z);
-                Vector2 front = new Vector2(b.Position.x, b.Position.z) + dir * (s / 2f + 1.5f);
-                bool arty = wall != null && IsArtillery(d);
-                Line(front, Mathf.CeilToInt(s / 2f) + 1, 0, arty ? wall : cover, arty ? wallStuff : stuff);
-            }
-        }
     }
 
     /// <summary>La couverture vanilla (aléatoire) est remplacée par la nôtre, orientée vers la base.</summary>
