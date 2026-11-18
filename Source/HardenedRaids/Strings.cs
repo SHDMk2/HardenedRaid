@@ -72,7 +72,7 @@ namespace HardenedRaids
             ["DeadTurrets"] = "AI ignores out-of-service turrets (no power, empty magazine, no fuel)",
 
             ["SecSiege"] = "<b>Sieges and vehicles</b>",
-            ["SiegeUpgrade"] = "Reinforced siege camps (artillery, modded turrets, trenches facing the base)",
+            ["SiegeUpgrade"] = "Reinforced siege camps (artillery, modded turrets, sandbags facing the base)",
             ["SiegeArtillery"] = "Max artillery pieces per siege: {0}",
             ["SiegeTurrets"] = "Max turrets per siege: {0}",
             ["SupportTeams"] = "Support teams during assaults (forward camp with turrets)",
@@ -176,7 +176,7 @@ namespace HardenedRaids
             ["DeadTurrets"] = "L'IA ignore les tourelles hors service (sans courant, chargeur vide, sans carburant)",
 
             ["SecSiege"] = "<b>Sièges et véhicules</b>",
-            ["SiegeUpgrade"] = "Camps de siège renforcés (artillerie, tourelles des mods, tranchées face à la base)",
+            ["SiegeUpgrade"] = "Camps de siège renforcés (artillerie, tourelles des mods, sacs de sable face à la base)",
             ["SiegeArtillery"] = "Pièces d'artillerie max par siège : {0}",
             ["SiegeTurrets"] = "Tourelles max par siège : {0}",
             ["SupportTeams"] = "Équipes d'appui pendant les assauts (camp avancé avec tourelles)",

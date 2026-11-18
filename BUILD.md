@@ -31,7 +31,7 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | `CECompat.cs` | Combat Extended ammo (reflection, optional) and AI ammo type weights |
 | `Waves.cs` | delayed waves (saved GameComponent; waves of a removed map dropped before saving, vehicle cost returned to the infantry of a wave launched without its vehicles) |
 | `AIPatches.cs` | smart/breach/sapper strategy weights, turret avoid grid, out-of-service turrets |
-| `SiegePatches.cs` | siege camps: modded artillery and turrets (manned or automatic, gunner cell kept clear), cover facing the base |
+| `SiegePatches.cs` | siege camps: modded artillery (building / weapon tags or indirect fire; at least one piece with the vanilla `Artillery` tag so NoArtillery does not fire early) and turrets (manned or automatic, gunner cell kept clear; no anti-aircraft guns or spotlights), sandbags facing the base (Fortifications 1×2 / 2×2 included, trenches excluded: no cover), sandbag walls / embrasures in front of the artillery, builders' construction level from the camp's actual plans |
 | `SupportTeams.cs` | support teams (forward camp during an assault) + enemy turret resupply |
 | `TurretManning.cs` | enemy turret crews: one dedicated gunner per built manned piece in siege / support camps (vanilla ManClosestTurret duty), AI may man an already loaded turret without ammo on the ground (vanilla / CE job givers), occupant-only bunkers (Fortifications) left out of the catalogs |
 | `Convoy.cs` | enemy convoy: approach, dismount, truck turrets, fire support, retreat and re-boarding (`Defs/HR_AI.xml`) |

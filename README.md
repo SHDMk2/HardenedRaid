@@ -21,7 +21,7 @@ Vanilla scales raids by adding more and more poorly equipped raiders. Hardened R
 - **Duplicator obelisk** (Anomaly): duplicates scale with your threat but are capped at the per-wave cap (100 by default).
 - **Manhunter packs**: up to the neolithic wave cap (300 by default); animal events get rarer when your threat exceeds what they can spend.
 - **Smarter AI**: smart, breach and sapper raids become more common at high tiers, veterans avoid turret fields of fire, and turrets that are out of service (no power, empty magazine, no fuel) are ignored.
-- **Reinforced sieges**: artillery and turrets from mods (Fortifications, VFE Security, CE Armory...), trenches facing your base, and forward support teams during assaults.
+- **Reinforced sieges**: artillery and turrets from mods (Fortifications, VFE Security, CE Armory...; no anti-aircraft guns or spotlights), sandbag lines facing your base (sandbag walls and embrasures in front of the artillery), and forward support teams during assaults.
 - **Enemy vehicles** (experimental, needs Vehicle Framework + Vanilla Vehicles Expanded): tanks, rocket and artillery fire support, trucks and IFVs, with crews, ammo and fuel. Vehicles are priced by value; rocket swarms and artillery cost much more.
 - **Ammo sanity** (Combat Extended): no antigrain ammo, EMP and biological ammo made rare.
 - **Language option**: English by default, French available (Mod settings → Hardened Raids).
