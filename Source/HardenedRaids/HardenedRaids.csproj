@@ -33,7 +33,7 @@
 
   <!-- Vehicle Framework (optional at runtime: only used when the mod is active). Override with -p:VFDir=... -->
   <PropertyGroup>
-    <VFDir Condition="'$(VFDir)' == ''">$(HOME)/.local/share/Steam/steamapps/workshop/content/294100/3014915404/1.6/Assemblies</VFDir>
+    <VFDir Condition="'$(VFDir)' == ''">$(HOME)/.local/share/Steam/steamapps/workshop/content/294100/3014915404/1.7/Assemblies</VFDir>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Vehicles">

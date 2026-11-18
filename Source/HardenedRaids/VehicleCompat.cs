@@ -916,6 +916,8 @@ namespace HardenedRaids
             var exit2 = HarmonyLib.AccessTools.Method("Vehicles.PathingHelper:ExitMap");
             if (exit2 != null) harmony.Patch(exit2, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(ExitPrefix2)));
             Patch_EnemyHandbrake.Apply(harmony);
+            Patch_EnemyBrakesVF.Apply(harmony);
+            Patch_EnemyIdleDismount.Apply(harmony);
             Patch_TurretKeepTarget.Apply(harmony);
         }
 
@@ -959,6 +961,61 @@ namespace HardenedRaids
         public static void Postfix(object __instance, bool __state)
         {
             if (__state) handbrake.SetValue(__instance, false);
+        }
+    }
+
+    /// <summary>
+    /// Vehicle Framework 1.7.2534 : frein à main natif (VehiclePathFollower.EngageBrakes) qui abîme les roues à
+    /// chaque arrêt brusque, comme celui de VVE. Même traitement : neutralisé pour les véhicules non joueurs (l'IA
+    /// s'arrête sans cesse), en coupant le réglage VF le temps de l'appel. Rien de sauvegardé.
+    /// </summary>
+    public static class Patch_EnemyBrakesVF
+    {
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method("Vehicles.VehiclePathFollower:EngageBrakes");
+            if (m == null || HarmonyLib.AccessTools.Field("Vehicles.SectionMain:useHandBrakes") == null) return;
+            harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyBrakesVF), nameof(Prefix)),
+                finalizer: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyBrakesVF), nameof(Finalizer)));
+        }
+
+        public static void Prefix(VehiclePathFollower __instance, out bool __state)
+        {
+            __state = false;
+            SectionMain s = VehicleMod.settings?.main;
+            Faction f = __instance?.vehicle?.Faction;
+            if (s != null && s.useHandBrakes && f != null && !f.IsPlayer)
+            {
+                s.useHandBrakes = false;
+                __state = true;
+            }
+        }
+
+        public static void Finalizer(bool __state)
+        {
+            if (__state && VehicleMod.settings?.main != null) VehicleMod.settings.main.useHandBrakes = true;
+        }
+    }
+
+    /// <summary>
+    /// Vehicle Framework 1.7.2534 : un véhicule immobile depuis 5 h fait débarquer tout le monde (pensé pour les
+    /// colons). Pour l'IA ça vide les blindés garés des colonies, les pièces d'appui-feu déployées et les convois
+    /// en attente : le compteur d'inactivité est remis à zéro pour les véhicules non joueurs. Rien de sauvegardé
+    /// en plus (ticksIdle est déjà sauvegardé par VF ; mod retiré, VF reprend son comportement).
+    /// </summary>
+    public static class Patch_EnemyIdleDismount
+    {
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method("Vehicles.VehiclePawn:TickInterval");
+            if (m == null || HarmonyLib.AccessTools.Method("Vehicles.VehiclePawn:ResetIdleTicks") == null) return;
+            harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_EnemyIdleDismount), nameof(Prefix)));
+        }
+
+        public static void Prefix(VehiclePawn __instance)
+        {
+            Faction f = __instance.Faction;
+            if (f != null && !f.IsPlayer) __instance.ResetIdleTicks();
         }
     }
 
