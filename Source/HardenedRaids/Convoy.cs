@@ -180,7 +180,7 @@ namespace HardenedRaids
                 bool crew = l?.LordJob is LordJob_HRTurretCrew;
                 if (!(l == null || l == infantryLord || crew || ExitLike(l))) continue;
                 if (!vehicles.Any(v => v.Position.InHorDistOf(p.Position, 150f))) continue;
-                if (crew)
+                if (crew && !((LordJob_HRTurretCrew)l.LordJob).siegeCamp)   // pièce de siège : laissée sur place, pas remballée
                 {
                     Building b = l.ownedBuildings.Where(x => x.Spawned).OrderBy(x => x.Position.DistanceToSquared(p.Position)).FirstOrDefault();
                     if (b != null) packs[p] = b;
@@ -742,6 +742,13 @@ namespace HardenedRaids
         private Faction faction;
         public const string MemoLost = "HRTurretsLost";
 
+        /// <summary>
+        /// Équipage d'un camp de siège passé à l'assaut (<see cref="SiegeCrews"/>) : ses pièces ne sont pas
+        /// remballées par la retraite du convoi, et deviennent neutres à la fin du lord, comme vanilla les rend au
+        /// passage à l'assaut. Sauvegardé ; absent d'une save plus ancienne : false (tourelle de camion).
+        /// </summary>
+        public bool siegeCamp;
+
         public LordJob_HRTurretCrew() { }
         public LordJob_HRTurretCrew(Faction f) { faction = f; }
 
@@ -777,7 +784,19 @@ namespace HardenedRaids
                                                    && l.ownedPawns.Count > 0 && !LordJob_HRConvoy.ExitLike(l));
         }
 
-        public override void ExposeData() => Scribe_References.Look(ref faction, "faction");
+        /// <summary>Fin du lord (équipage parti, tué, ou converti par la désactivation) : pièces de siège rendues neutres.</summary>
+        public override void Cleanup()
+        {
+            if (!siegeCamp || lord == null) return;
+            foreach (Building b in lord.ownedBuildings.ToList())
+                if (b != null && b.Spawned && !b.Destroyed && b.Faction == faction) b.SetFaction(null);
+        }
+
+        public override void ExposeData()
+        {
+            Scribe_References.Look(ref faction, "faction");
+            Scribe_Values.Look(ref siegeCamp, "siegeCamp", false);
+        }
     }
 
     public class LordToil_HRManTurrets : LordToil

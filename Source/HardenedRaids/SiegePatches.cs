@@ -17,7 +17,8 @@ namespace HardenedRaids
     /// </summary>
     /// <summary>
     /// Palier du camp de siège = palier forcé du raid (A5), pas les points du lord. Retenu par lord de siège (table
-    /// faible, non sauvegardée) et lu pendant LordToil_Siege.Init, où les plans sont posés.
+    /// faible, non sauvegardée) et lu pendant LordToil_Siege.Init, où les plans sont posés, avec l'effectif du
+    /// groupe et le type de camp (siège ou équipe d'appui).
     /// </summary>
     public static class SiegeTier
     {
@@ -27,6 +28,15 @@ namespace HardenedRaids
 
         /// <summary>Palier du siège dont on pose le camp, -1 sinon.</summary>
         public static float Current = -1f;
+
+        /// <summary>Effectif du groupe dont on pose le camp (0 hors de LordToil_Siege.Init).</summary>
+        public static int Raiders;
+
+        /// <summary>Camp d'une équipe d'appui (pendant LordToil_Siege.Init).</summary>
+        public static bool Support;
+
+        /// <summary>Toil de siège dont on pose le camp (pendant LordToil_Siege.Init).</summary>
+        public static LordToil_Siege Toil;
 
         /// <summary>À appeler par qui crée un LordJob_Siege dont le palier est connu (raid, équipe d'appui).</summary>
         public static void Register(Verse.AI.Group.LordJob job, float tierX)
@@ -51,58 +61,114 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(LordToil_Siege), nameof(LordToil_Siege.Init))]
     public static class Patch_SiegeInitTier
     {
-        public static void Prefix(LordToil_Siege __instance) => SiegeTier.Current = SiegeTier.For(__instance.lord?.LordJob);
-        public static void Finalizer() => SiegeTier.Current = -1f;
+        public static void Prefix(LordToil_Siege __instance)
+        {
+            Verse.AI.Group.Lord l = __instance.lord;
+            SiegeTier.Current = SiegeTier.For(l?.LordJob);
+            SiegeTier.Raiders = l?.ownedPawns.Count ?? 0;
+            SiegeTier.Support = l?.Map != null && MapComponent_HostileTurretSupply.For(l.Map)?.IsSupportLord(l) == true;
+            SiegeTier.Toil = __instance;
+        }
+
+        public static void Finalizer()
+        {
+            SiegeTier.Current = -1f;
+            SiegeTier.Raiders = 0;
+            SiegeTier.Support = false;
+            SiegeTier.Toil = null;
+        }
     }
 
     [HarmonyPatch(typeof(SiegeBlueprintPlacer), nameof(SiegeBlueprintPlacer.PlaceBlueprints))]
     public static class Patch_SiegeBlueprints
     {
-        private static readonly MethodInfo findArtySpot = AccessTools.Method(typeof(SiegeBlueprintPlacer), "FindArtySpot");
-        private static readonly MethodInfo canPlaceAt = AccessTools.Method(typeof(SiegeBlueprintPlacer), "CanPlaceBlueprintAt");
-        private static readonly MethodInfo clearHostilePlans = AccessTools.Method(typeof(SiegeBlueprintPlacer), "ClearHostilePlansAt");
-
         public static void Postfix(IntVec3 placeCenter, Map map, Faction placeFaction, float points, ref IEnumerable<Blueprint_Build> __result)
         {
-            if (!HRSettings.SiegeUpgrade || placeFaction == null || findArtySpot == null || canPlaceAt == null) return;
+            if (!HRSettings.SiegeUpgrade || placeFaction == null) return;
             __result = Extend(__result, placeCenter, map, placeFaction, points);
         }
 
+        /// <summary>
+        /// Palier 2+ : plan du camp (<see cref="SiegeCamp.PlacePieces"/>) à la place de l'artillerie vanilla posée au
+        /// hasard. La couverture vient plus tard, quand les pièces sont construites (<see cref="Patch_SiegeCoverLater"/>).
+        /// </summary>
         private static IEnumerable<Blueprint_Build> Extend(IEnumerable<Blueprint_Build> vanilla, IntVec3 center, Map map, Faction faction, float blueprintPoints)
         {
-            var pieces = new List<Blueprint_Build>();
-            foreach (Blueprint_Build b in vanilla)   // vanilla : seulement l'artillerie (sa couverture est désactivée plus bas)
-            {
-                if (b.def.entityDefToBuild is ThingDef td && td.building?.turretGunDef != null) pieces.Add(b);
-                yield return b;
-            }
-
+            List<Blueprint_Build> vanillaArty = vanilla.ToList();   // vanilla : seulement l'artillerie (sa couverture est désactivée plus bas)
             // palier forcé du raid (SiegeTier) ; à défaut (camp posé après un rechargement…), estimé depuis
             // blueprintPoints = points du raid × 0.2-0.3 (RaidStrategyWorker_Siege / équipe d'appui)
             float x = SiegeTier.Current >= 0f ? SiegeTier.Current : Tiers.TierX(faction.def, blueprintPoints * 4f);
-            IntVec3 target = ThreatTarget(map, center);
-            Rot4 facing = Rot4.FromAngleFlat((target - center).AngleFlat);
-            var extras = new List<Blueprint_Build>();
-            try
+            List<Blueprint_Build> plan = null;
+            if (x >= 2f)
             {
-                if (x >= 2f)
+                try
                 {
-                    PlaceArtillery(extras, map, faction, x, pieces.Count(b => IsArtillery((ThingDef)b.def.entityDefToBuild)), facing);
-                    PlaceTurrets(extras, map, faction, x, facing);
+                    int raiders = SiegeTier.Raiders > 0 ? SiegeTier.Raiders : 10;
+                    plan = SiegeCamp.PlacePieces(map, faction, center, x, raiders, SiegeTier.Support, vanillaArty, ThreatTarget(map, center));
                 }
-                pieces.AddRange(extras);
-                PlaceCover(extras, map, faction, center, target, x, pieces);
+                catch (Exception e)
+                {
+                    Log.Warning("[Hardened Raids] siege camp: " + e);
+                }
             }
-            catch (Exception e)
-            {
-                Log.Warning("[Hardened Raids] siege camp: " + e);
-            }
-            HRLog.Msg($"siège {faction.Name} (palier {x:F1}) vers {target} : +{extras.Count} plans ({string.Join(", ", extras.GroupBy(b => b.def.entityDefToBuild.label).Select(g => g.Count() + "× " + g.Key))})");
-            foreach (Blueprint_Build b in extras) yield return b;
+            else HRLog.Msg($"siège {faction.Name} (palier {x:F1}) : artillerie vanilla ({vanillaArty.Count} pièce(s)).");
+            foreach (Blueprint_Build b in plan ?? vanillaArty)
+                if (!b.Destroyed) yield return b;
         }
 
         // ------------------------------------------------------------ catalogues
-        public static bool IsArtillery(ThingDef d) => d?.building?.buildingTags != null && d.building.buildingTags.Contains("Artillery_BaseDestroyer");
+        /// <summary>
+        /// Pièce d'artillerie (tir indirect) : tag de bâtiment Artillery / Artillery_BaseDestroyer, tag d'arme
+        /// Artillery / Artillery_BaseDestroyer, ou arme à tir courbe (pas de ligne de vue et portée minimale ≥ 14,
+        /// ou verbe « mortier » de CE). Couvre le mortier vanilla, VFES_Turret_Artillery, le mortier portable et la
+        /// bombarde de CE Armory, la catapulte VFES, et sous CE les FT_TurretHexMortar / FT_Turret_Mortar /
+        /// FTC_Katyusha_Turret, dont les armes CE n'ont pas de tag d'artillerie ; Prince et Empero ont le tag d'arme.
+        /// </summary>
+        public static bool IsArtillery(ThingDef d)
+        {
+            if (d?.building == null) return false;
+            List<string> bt = d.building.buildingTags;
+            if (bt != null && (bt.Contains("Artillery_BaseDestroyer") || bt.Contains("Artillery"))) return true;
+            ThingDef gun = d.building.turretGunDef;
+            if (gun == null) return false;
+            if (gun.weaponTags != null && (gun.weaponTags.Contains("Artillery_BaseDestroyer") || gun.weaponTags.Contains("Artillery"))) return true;
+            VerbProperties v = gun.Verbs?.FirstOrDefault();
+            if (v == null) return false;
+            return (!v.requireLineOfSight && v.minRange >= 14f) || (v.verbClass != null && v.verbClass.Name.Contains("Mortar"));
+        }
+
+        /// <summary>Pièce qui compte pour le trigger vanilla NoArtillery (tag de bâtiment exact « Artillery »).</summary>
+        public static bool HasArtilleryTag(ThingDef d) => d?.building?.buildingTags != null && d.building.buildingTags.Contains("Artillery");
+
+        /// <summary>Portée minimale de l'arme de la pièce (0 sans arme).</summary>
+        public static float MinRange(ThingDef d) => d?.building?.turretGunDef?.Verbs?.FirstOrDefault()?.minRange ?? 0f;
+
+        /// <summary>Projecteurs / désignateurs (FTC_SpotterLight, VFES_Turret_Searchlight…) : ils ne blessent personne.</summary>
+        private static bool IsSpotter(ThingDef d)
+        {
+            if (d.defName.IndexOf("Spotter", StringComparison.OrdinalIgnoreCase) >= 0
+                || d.defName.IndexOf("Searchlight", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            List<VerbProperties> verbs = d.building?.turretGunDef?.Verbs;
+            return verbs != null && verbs.Any(v => v.verbClass != null
+                                                 && (v.verbClass.Name.Contains("MarkForArtillery") || v.verbClass.Name.Contains("Dazzle")));
+        }
+
+        private static readonly System.Text.RegularExpressions.Regex AAName =
+            new System.Text.RegularExpressions.Regex("(^|_|[a-z])AA($|_|[A-Z])|AntiAir|Flak");
+
+        /// <summary>
+        /// Tourelles anti-aériennes (FT_TurretAA, FT_TurretQuadAA, FT_TurretHeavyFlak, FTC_TurretTwinHeavyFlak,
+        /// Turret_Flak de CE, VFES_Turret_AntiAir) : aucun marqueur commun dans les defs, on lit le nom et le label.
+        /// </summary>
+        private static bool IsAntiAir(ThingDef d)
+        {
+            ThingDef gun = d.building?.turretGunDef;
+            if (AAName.IsMatch(d.defName) || (gun != null && AAName.IsMatch(gun.defName))) return true;
+            string label = (d.label ?? "") + " " + (gun?.label ?? "");
+            return label.IndexOf("anti-air", StringComparison.OrdinalIgnoreCase) >= 0
+                   || label.IndexOf("antiair", StringComparison.OrdinalIgnoreCase) >= 0
+                   || label.IndexOf("flak", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
 
         /// <summary>Niveau réel d'une pièce : le sien, ou celui de ses recherches, ou celui de son arme.</summary>
         public static TechLevel EffectiveTech(ThingDef d)
@@ -119,7 +185,7 @@ namespace HardenedRaids
         /// Pas au-dessus du niveau de la faction ; et une armée industrielle ou plus n'aligne pas de baliste ni de
         /// pierrier : plancher industriel.
         /// </summary>
-        private static bool TechOk(ThingDef d, Faction f)
+        public static bool TechOk(ThingDef d, Faction f)
         {
             TechLevel t = EffectiveTech(d);
             if (t == TechLevel.Undefined) return true;
@@ -151,25 +217,73 @@ namespace HardenedRaids
             gun != null && ((gun.Verbs != null && gun.Verbs.Any(v => v.defaultProjectile != null))
                             || (gun.comps != null && gun.comps.Any(c => c.GetType().Name == "CompProperties_AmmoUser")));
 
-        private static List<ThingDef> artilleryDefs, turretDefs, coverDefs;
-        public static int MaxConstructionSkill { get; private set; }
+        private static List<ThingDef> artilleryDefs, turretDefs, coverDefs, parapetDefs;
+
+        private static bool Contains(string s, string part) => s.IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0;
 
         public static void EnsureCatalog()
         {
             if (artilleryDefs != null) return;
-            artilleryDefs = DefDatabase<ThingDef>.AllDefs.Where(d => IsArtillery(d) && d.BuildableByPlayer && !NeedsPower(d)).ToList();
-            // tourelles : servies (autocanon, flak, mitrailleuse...) ou automatiques, sans électricité, au plus 5×5
+            artilleryDefs = DefDatabase<ThingDef>.AllDefs.Where(d =>
+                d.building?.turretGunDef != null && IsArtillery(d) && d.BuildableByPlayer && !NeedsPower(d)
+                && !TurretManning.RequiresOccupant(d) && !IsSpotter(d)).ToList();
+            // tourelles : servies (autocanon, mitrailleuse...) ou automatiques, sans électricité, au plus 5×5 ;
+            // ni artillerie, ni anti-aérien, ni projecteur
+            var antiAir = new List<ThingDef>();
             turretDefs = DefDatabase<ThingDef>.AllDefs.Where(d =>
-                d.building?.turretGunDef != null && !IsArtillery(d) && d.BuildableByPlayer && !NeedsPower(d)
-                && d.size.x <= 5 && d.size.z <= 5 && GunHarms(d.building.turretGunDef)
-                && (d.building.buildingTags == null || !d.building.buildingTags.Any(t => t.StartsWith("Artillery")))).ToList();
-            // tranchées / sacs de sable des mods (1×1)
+            {
+                if (d.building?.turretGunDef == null || IsArtillery(d) || !d.BuildableByPlayer || NeedsPower(d)) return false;
+                if (d.size.x > 5 || d.size.z > 5 || !GunHarms(d.building.turretGunDef) || IsSpotter(d)) return false;
+                if (TurretManning.RequiresOccupant(d)) return false;   // bunkers à occupant : l'IA n'y entre pas, ils ne tireraient jamais
+                if (IsAntiAir(d)) { antiAir.Add(d); return false; }
+                return true;
+            }).ToList();
+            // sacs de sable (1×1, et 1×2 / 2×2 de Fortifications Citadel) ; les tranchées (fillPercent 0, 5 000 à
+            // 7 500 de travail par case) ne couvrent pas et sont exclues
             coverDefs = DefDatabase<ThingDef>.AllDefs.Where(d =>
-                d.building != null && d.BuildableByPlayer && d.size == IntVec2.One && d.fillPercent >= 0.4f && d.passability != Traversability.Impassable
-                && (d.defName.IndexOf("Trench", StringComparison.OrdinalIgnoreCase) >= 0 || d.defName.IndexOf("Sandbag", StringComparison.OrdinalIgnoreCase) >= 0)).ToList();
-            MaxConstructionSkill = Mathf.Min(20, artilleryDefs.Concat(turretDefs).Concat(coverDefs).Select(d => d.constructionSkillPrerequisite).DefaultIfEmpty(0).Max());
-            HRLog.Msg($"siège : {artilleryDefs.Count} artilleries, {turretDefs.Count} tourelles ({turretDefs.Count(d => d.HasComp(typeof(CompMannable)))} servies), "
-                      + $"{coverDefs.Count} couvertures. Tourelles : {string.Join(", ", turretDefs.Select(d => d.defName))}");
+                d.building != null && d.BuildableByPlayer && d.size.x <= 2 && d.size.z <= 2 && d.fillPercent >= 0.4f
+                && d.passability != Traversability.Impassable && Contains(d.defName, "Sandbag")).ToList();
+            // parapets des pièces d'artillerie (tir courbe : un mur devant ne gêne pas) : murs de sacs et embrasures 1×1
+            parapetDefs = DefDatabase<ThingDef>.AllDefs.Where(d =>
+                d.building != null && d.BuildableByPlayer && d.size == IntVec2.One && d.fillPercent >= 0.4f
+                && ((Contains(d.defName, "Embrasure") && !Contains(d.defName, "Corner"))
+                    || (Contains(d.defName, "Sandbag") && Contains(d.defName, "Wall")))).ToList();
+            coverDefs.RemoveAll(parapetDefs.Contains);
+            HRLog.Msg($"siège : catalogue — {artilleryDefs.Count} artilleries ({string.Join(", ", artilleryDefs.Select(d => d.defName))}), "
+                      + $"{turretDefs.Count} tourelles ({turretDefs.Count(d => d.HasComp<CompMannable>())} servies : {string.Join(", ", turretDefs.Select(d => d.defName))}), "
+                      + $"anti-aériens écartés ({string.Join(", ", antiAir.Select(d => d.defName))}), "
+                      + $"couvertures ({string.Join(", ", coverDefs.Select(d => d.defName))}), parapets ({string.Join(", ", parapetDefs.Select(d => d.defName))}).");
+        }
+
+        /// <summary>
+        /// Parapets autorisés pour la faction : une armée industrielle ou plus ne monte pas de palissade en bois
+        /// (FT_Palisade_Embrasures : niveau non renseigné, seul le matériau la trahit).
+        /// </summary>
+        public static List<ThingDef> ParapetDefsFor(Faction f)
+        {
+            EnsureCatalog();
+            return parapetDefs.Where(d => TechOk(d, f)
+                && !(f.def.techLevel >= TechLevel.Industrial && d.stuffCategories != null && d.stuffCategories.Count > 0
+                     && d.stuffCategories.All(c => c == StuffCategoryDefOf.Woody))).ToList();
+        }
+
+        /// <summary>Sac de sable ou parapet du catalogue (couverture d'un camp).</summary>
+        public static bool IsCatalogCover(ThingDef d)
+        {
+            EnsureCatalog();
+            return coverDefs.Contains(d) || parapetDefs.Contains(d);
+        }
+
+        public static List<ThingDef> CoverDefsFor(Faction f)
+        {
+            EnsureCatalog();
+            return coverDefs.Where(d => TechOk(d, f)).ToList();
+        }
+
+        public static List<ThingDef> ArtilleryDefsFor(Faction f)
+        {
+            EnsureCatalog();
+            return artilleryDefs.Where(d => TechOk(d, f)).ToList();
         }
 
         /// <summary>Tourelles autorisées pour la faction, au plus maxSize×maxSize.</summary>
@@ -179,7 +293,7 @@ namespace HardenedRaids
             return turretDefs.Where(d => TechOk(d, f) && d.size.x <= maxSize && d.size.z <= maxSize).ToList();
         }
 
-        private static ThingDef StuffFor(ThingDef d) => d.MadeFromStuff ? (GenStuff.AllowedStuffsFor(d).Contains(ThingDefOf.Steel) ? ThingDefOf.Steel : GenStuff.DefaultStuffFor(d)) : null;
+        public static ThingDef StuffFor(ThingDef d) => d.MadeFromStuff ? (GenStuff.AllowedStuffsFor(d).Contains(ThingDefOf.Steel) ? ThingDefOf.Steel : GenStuff.DefaultStuffFor(d)) : null;
 
         /// <summary>Plus le palier est haut, plus on favorise le matériel cher (gros calibres).</summary>
         public static ThingDef PickWeighted(List<ThingDef> defs, float x)
@@ -188,101 +302,41 @@ namespace HardenedRaids
             return defs.TryRandomElementByWeight(d => Mathf.Pow(Mathf.Max(50f, d.BaseMarketValue), exp), out ThingDef r) ? r : null;
         }
 
-        private static bool TryPlace(List<Blueprint_Build> output, ThingDef def, Map map, Faction faction, Rot4 rot)
-        {
-            if (!def.rotatable) rot = Rot4.North;
-            var spot = (IntVec3)findArtySpot.Invoke(null, new object[] { def, rot, map });
-            if (!spot.IsValid) return false;
-            ThingDef stuff = StuffFor(def);
-            clearHostilePlans?.Invoke(null, new object[] { spot, rot, def, stuff ?? ThingDefOf.Steel, map });
-            output.Add(GenConstruct.PlaceBlueprintForBuild(def, spot, map, rot, faction, stuff));
-            return true;
-        }
+        /// <summary>Case du servant d'un plan de pièce (Invalid si la pièce n'en a pas).</summary>
+        public static IntVec3 GunnerCell(Blueprint_Build b, Map map) =>
+            b.def.entityDefToBuild is ThingDef d && d.hasInteractionCell ? ThingUtility.InteractionCellWhenAt(d, b.Position, b.Rotation, map) : IntVec3.Invalid;
 
-        /// <summary>La cible du siège : le bâtiment du joueur le plus proche du camp.</summary>
+        /// <summary>
+        /// La cible du siège : le bâtiment de combat du joueur le plus proche (tourelles, bâtiments que vanilla
+        /// traite comme cibles), pas un câble ou un mur isolé ; à défaut, le barycentre des colons et de la zone Home.
+        /// </summary>
         public static IntVec3 ThreatTarget(Map map, IntVec3 from)
         {
             Building best = null;
             float bestD = float.MaxValue;
-            foreach (Building b in map.listerBuildings.allBuildingsColonist)
+            foreach (Building b in map.listerBuildings.allBuildingsColonistCombatTargets)
             {
+                if (b == null || !b.Spawned) continue;
                 float d = (b.Position - from).LengthHorizontalSquared;
                 if (d < bestD) { bestD = d; best = b; }
             }
-            return best?.Position ?? map.Center;
+            if (best != null) return best.Position;
+            var parts = new List<Vector2>();
+            List<Pawn> colonists = map.mapPawns.FreeColonistsSpawned;
+            if (colonists.Count > 0) parts.Add(new Vector2((float)colonists.Average(p => p.Position.x), (float)colonists.Average(p => p.Position.z)));
+            Area home = map.areaManager?.Home;
+            if (home != null && home.TrueCount > 0)
+            {
+                long sx = 0, sz = 0;
+                int n = 0;
+                foreach (IntVec3 c in home.ActiveCells) { sx += c.x; sz += c.z; n++; }
+                if (n > 0) parts.Add(new Vector2(sx / (float)n, sz / (float)n));
+            }
+            if (parts.Count == 0) return map.Center;
+            Vector2 m = new Vector2(parts.Average(v => v.x), parts.Average(v => v.y));
+            return new IntVec3(Mathf.RoundToInt(m.x), 0, Mathf.RoundToInt(m.y)).ClampInsideMap(map);
         }
 
-        // ------------------------------------------------------------ placement
-        private static void PlaceArtillery(List<Blueprint_Build> output, Map map, Faction faction, float x, int already, Rot4 facing)
-        {
-            EnsureCatalog();
-            List<ThingDef> defs = artilleryDefs.Where(d => TechOk(d, faction)).ToList();
-            if (defs.Count == 0) return;
-            int target = Mathf.Min(HRSettings.MaxSiegeArtillery, 1 + Mathf.RoundToInt(x * 1.2f));
-            for (int i = already; i < target; i++)
-            {
-                ThingDef def = PickWeighted(defs, x);
-                if (def == null || !TryPlace(output, def, map, faction, facing)) break;
-            }
-        }
-
-        private static void PlaceTurrets(List<Blueprint_Build> output, Map map, Faction faction, float x, Rot4 facing)
-        {
-            EnsureCatalog();
-            List<ThingDef> kit = ChooseKit(turretDefs.Where(d => TechOk(d, faction)).ToList(), x);
-            if (kit.Count == 0) return;
-            HRLog.Msg($"siège : dotation {string.Join(" + ", kit.Select(d => d.label))}.");
-            int n = Mathf.Clamp(Mathf.RoundToInt((x - 1.5f) * 1.5f), 1, HRSettings.MaxSiegeTurrets);
-            for (int i = 0; i < n; i++)
-            {
-                ThingDef def = kit[i % kit.Count];
-                if (def == null || !TryPlace(output, def, map, faction, facing)) break;
-            }
-        }
-
-        /// <summary>
-        /// Lignes de couverture perpendiculaires à la direction de la base, devant le camp (plusieurs rangées avec
-        /// des passages), plus un parapet devant chaque pièce d'artillerie / tourelle.
-        /// </summary>
-        private static void PlaceCover(List<Blueprint_Build> output, Map map, Faction faction, IntVec3 center, IntVec3 target, float x, List<Blueprint_Build> pieces)
-        {
-            EnsureCatalog();
-            List<ThingDef> defs = coverDefs.Where(d => TechOk(d, faction)).ToList();
-            ThingDef cover = defs.Count > 0 ? defs.RandomElement() : ThingDefOf.Sandbags;   // une seule sorte par camp
-            ThingDef stuff = cover == ThingDefOf.Sandbags ? ThingDefOf.Cloth : StuffFor(cover);
-
-            Vector2 dir = new Vector2(target.x - center.x, target.z - center.z);
-            dir = dir.sqrMagnitude < 1f ? Vector2.right : dir.normalized;
-            Vector2 perp = new Vector2(-dir.y, dir.x);
-            var done = new HashSet<IntVec3>();
-
-            void Line(Vector2 mid, int half, int gapEvery)
-            {
-                for (int t = -half; t <= half; t++)
-                {
-                    if (gapEvery > 0 && t != 0 && t % gapEvery == 0) continue; // passages pour sortir
-                    Vector2 p = mid + perp * t;
-                    var c = new IntVec3(Mathf.RoundToInt(p.x), 0, Mathf.RoundToInt(p.y));
-                    if (!done.Add(c) || !c.InBounds(map)) continue;
-                    if (!(bool)canPlaceAt.Invoke(null, new object[] { c, Rot4.North, cover, map, stuff })) continue;
-                    output.Add(GenConstruct.PlaceBlueprintForBuild(cover, c, map, Rot4.North, faction, stuff));
-                }
-            }
-
-            var origin = new Vector2(center.x, center.z);
-            // rangées du camp, face à la base
-            int rows = Mathf.Clamp(1 + Mathf.RoundToInt(x / 2f), 1, 4);
-            for (int r = 0; r < rows; r++)
-                Line(origin + dir * (7f + 3f * r), 5 + r + Mathf.RoundToInt(x / 2f), 6);
-            // parapet devant chaque pièce
-            foreach (Blueprint_Build b in pieces)
-            {
-                ThingDef d = (ThingDef)b.def.entityDefToBuild;
-                float s = Mathf.Max(d.size.x, d.size.z);
-                Vector2 front = new Vector2(b.Position.x, b.Position.z) + dir * (s / 2f + 1.5f);
-                Line(front, Mathf.CeilToInt(s / 2f) + 1, 0);
-            }
-        }
     }
 
     /// <summary>La couverture vanilla (aléatoire) est remplacée par la nôtre, orientée vers la base.</summary>
@@ -297,15 +351,26 @@ namespace HardenedRaids
         }
     }
 
-    /// <summary>Les bâtisseurs du siège ont le niveau de construction requis par les tourelles des mods.</summary>
+    /// <summary>
+    /// Les bâtisseurs du siège ont le niveau de construction requis par ce que le camp construit vraiment (plans et
+    /// chantiers du lord), pas par tout le catalogue des mods. Déduit de la carte à chaque appel, rien n'est retenu.
+    /// </summary>
     [HarmonyPatch(typeof(LordToil_Siege), "SetAsBuilder")]
     public static class Patch_SiegeBuilderSkill
     {
-        public static void Postfix(Pawn p)
+        public static void Postfix(LordToil_Siege __instance, Pawn p)
         {
-            if (!HRSettings.SiegeUpgrade || p?.skills == null) return;
-            Patch_SiegeBlueprints.EnsureCatalog();
-            int lvl = Patch_SiegeBlueprints.MaxConstructionSkill;
+            if (!HRSettings.SiegeUpgrade || p?.skills == null || __instance?.data is not LordToilData_Siege data) return;
+            int lvl = 0;
+            foreach (Blueprint b in data.blueprints)
+                if (b != null && !b.Destroyed && b.def.entityDefToBuild is ThingDef d) lvl = Mathf.Max(lvl, d.constructionSkillPrerequisite);
+            Map map = __instance.Map;
+            Faction f = __instance.lord?.faction;
+            if (map != null && f != null)
+                foreach (Thing t in map.listerThings.ThingsInGroup(ThingRequestGroup.BuildingFrame))
+                    if (t.Faction == f && t.Position.InHorDistOf(data.siegeCenter, 25f) && t.def.entityDefToBuild is ThingDef fd)
+                        lvl = Mathf.Max(lvl, fd.constructionSkillPrerequisite);
+            lvl = Mathf.Min(20, lvl);
             if (lvl > 0) p.skills.GetSkill(SkillDefOf.Construction)?.EnsureMinLevelWithMargin(lvl);
         }
     }

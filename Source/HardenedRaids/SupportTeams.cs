@@ -40,10 +40,11 @@ namespace HardenedRaids
             int n = Mathf.Clamp(Mathf.RoundToInt(cands.Count * HRSettings.SupportShare), 3, 20);
 
             IntVec3 from = parms.spawnCenter.IsValid ? parms.spawnCenter : cands[0].Position;
-            IntVec3 spot = RCellFinder.FindSiegePositionFrom(from, map, errorOnFail: false);
-            if (!spot.IsValid)
+            // FindSiegePositionFrom rend le point d'entrée quand il échoue : pas de camp d'appui au bord de la carte
+            IntVec3 spot = SiegeCamp.FindCampSpot(from, map, parms.faction, x, out bool found);
+            if (!found)
             {
-                HRLog.Msg("équipe d'appui : aucune position de camp trouvée.");
+                HRLog.Msg("équipe d'appui : aucune zone dégagée pour le camp, pas d'équipe d'appui.");
                 return;
             }
             List<Pawn> team = cands.InRandomOrder().Take(n).ToList();
@@ -111,6 +112,8 @@ namespace HardenedRaids
         }
 
         public bool IsRegistered(Building_Turret t) => turrets.Contains(t);
+
+        public bool IsSupportLord(Lord l) => l != null && supportLords.Contains(l);
 
         private static bool Gone(Thing t) => t == null || t.Destroyed;   // Destroyed inclut Discarded
 
@@ -286,12 +289,24 @@ namespace HardenedRaids
             if (ammo == null) return;
             count = Mathf.Min(count, ammo.stackLimit * 2);
             IntVec3 at = t.def.hasInteractionCell ? t.InteractionCell : t.Position;
+            CellRect body = t.OccupiedRect();
+            // hors du parc : ni sous une autre pièce (plan, chantier ou bâtiment), ni sur la case de son servant
+            var park = new HashSet<IntVec3>();
+            foreach (Thing o in SiegeCamp.CampThings(t.Map, t.Faction, t.Position))
+            {
+                if (o == t || !SiegeCamp.IsPiece(SiegeCamp.Built(o)) || !o.Position.InHorDistOf(t.Position, 12f)) continue;
+                ThingDef od = SiegeCamp.Built(o);
+                foreach (IntVec3 c in SiegeCamp.Body(o)) park.Add(c);
+                if (od.hasInteractionCell) park.Add(ThingUtility.InteractionCellWhenAt(od, o.Position, o.Rotation, t.Map));
+            }
+            // à côté du poste, jamais sur la case du servant ni sous la pièce
+            bool Free(IntVec3 c) => c != at && !body.Contains(c) && !park.Contains(c);
             while (count > 0)
             {
                 Thing stack = ThingMaker.MakeThing(ammo);
                 stack.stackCount = Mathf.Min(count, ammo.stackLimit);
                 count -= stack.stackCount;
-                if (!GenPlace.TryPlaceThing(stack, at, t.Map, ThingPlaceMode.Near)) break;
+                if (!GenPlace.TryPlaceThing(stack, at, t.Map, ThingPlaceMode.Near, null, Free)) break;
             }
         }
 
