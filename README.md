@@ -48,6 +48,7 @@ For a clean removal, open Mod settings → Hardened Raids → **Prepare to remov
 
 - RimWorld **1.7** only.
 - Optional, detected at runtime: Combat Extended (+ Armory), GiTS Cyberbrains, Simple Sidearms, Vehicle Framework / Vanilla Vehicles Expanded, Fortifications, VFE Security.
+- Vehicle Framework + Combat Extended: chain explosions fixed. Under CE's vehicle compatibility, a 0-damage hit (flame explosion, fire) still sets off a damaged vehicle's explosive parts, so a burning vehicle could re-explode endlessly. Now a vehicle has at most one explosion pending, and neither its own explosion nor fires from vehicle explosions set it off again (all vehicles, yours included; setting "Vehicles: no chain explosions", on by default).
 - Not compatible with *Unlimited Threat Scale* (both remove the points cap).
 - Mods that replace raid pawn generation entirely may conflict.
 

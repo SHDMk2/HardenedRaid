@@ -59,6 +59,8 @@ namespace HardenedRaids
         public static bool EnableSupportTeams = true;
         public static float SupportMinTier = 3f;
         public static float SupportShare = 0.12f;  // part des raiders qui montent le camp d'appui
+        // ---- explosions : réacteurs explosifs VF relancés sans fin sous CE
+        public static bool VehicleExplosionGuard = true; // une explosion en attente par véhicule, ni auto-relance ni relance par le feu
 
         // --- lot uncap ---
         public static float SettlementThreatShare = 0.25f; // défenseurs des colonies hostiles : part de la menace du joueur
@@ -113,6 +115,8 @@ namespace HardenedRaids
             Scribe_Values.Look(ref EnableSupportTeams, "EnableSupportTeams", true);
             Scribe_Values.Look(ref SupportMinTier, "SupportMinTier", 3f);
             Scribe_Values.Look(ref SupportShare, "SupportShare", 0.12f);
+            // ---- explosions
+            Scribe_Values.Look(ref VehicleExplosionGuard, "VehicleExplosionGuard", true);
             // --- lot uncap ---
             Scribe_Values.Look(ref SettlementThreatShare, "SettlementThreatShare", 0.25f);
             Scribe_Values.Look(ref SettlementVehicles, "SettlementVehicles", true);
@@ -230,6 +234,8 @@ namespace HardenedRaids
             MaxTransports = (int)l.SliderLabeled(Strings.T("MaxTransports", MaxTransports), MaxTransports, 0, 40, 0.5f);
             l.CheckboxLabeled(Strings.T("TruckTurrets"), ref TruckTurrets);
             MaxTruckTurrets = (int)l.SliderLabeled(Strings.T("MaxTruckTurrets", MaxTruckTurrets), MaxTruckTurrets, 0, 10, 0.5f);
+            // ---- explosions
+            l.CheckboxLabeled(Strings.T("ExplosionGuard"), ref VehicleExplosionGuard, Strings.T("ExplosionGuardTip"));
 
             viewHeight = l.MaxColumnHeightSeen + 12f;
             l.End();
