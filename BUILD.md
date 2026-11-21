@@ -36,8 +36,8 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | `SiegeCrews.cs` | siege camps that hold: wounds no longer launch the assault (setting); on the assault, artillery and turrets keep their faction and their dedicated gunners in a `LordJob_HRTurretCrew` (resupplied; pieces neutral when that lord ends, never packed by a convoy retreat); two TransitionActions added, LordJob_Siege toils / triggers unchanged |
 | `SupportTeams.cs` | support teams (forward camp during an assault, only on a clear spot: none at the map edge) + enemy turret resupply (ammo crates next to the gunner, outside the other pieces) |
 | `TurretManning.cs` | enemy turret crews: one dedicated gunner per built manned piece in siege / support camps (vanilla ManClosestTurret duty), AI may man an already loaded turret without ammo on the ground (vanilla / CE job givers), occupant-only bunkers (Fortifications) left out of the catalogs |
-| `Convoy.cs` | enemy convoy: approach, dismount, truck turrets, fire support, retreat and re-boarding (`Defs/HR_AI.xml`) |
-| `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (with `SettlementVehicles.cs`, the only files touching VF types); chain-explosion guard on `Reactor_Explosive.Hit` for every vehicle (one pending explosion, no self / vehicle-fire re-trigger; setting) |
+| `Convoy.cs` | enemy convoy: approach, dismount, truck turrets, fire support, retreat and re-boarding, vehicles left behind on retreat released (neutral) (`Defs/HR_AI.xml`) |
+| `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (with `SettlementVehicles.cs`, the only files touching VF types); chain-explosion guard on `Reactor_Explosive.Hit` for every vehicle (one pending explosion, no self / vehicle-fire re-trigger; setting); "Claim" button on neutral vehicles |
 | `RaidContext.cs` | one context per raid (stack), safe for nested raids; planned waves and vehicles of the main group |
 | `WaveCaps.cs` | per-wave cap of the vanilla fallback, of human raids with tiers disabled and of non-human raids (mechanoids…) |
 | `InfestationWaves.cs` | infestations: hive cap per wave, extra hives dig in later |
@@ -46,7 +46,7 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | `EventPatches.cs` | manhunter packs (cap = low-tech wave cap, species weight), animal events rarer when the threat exceeds what they can spend |
 | `MechClusters.cs` | mech clusters: budget per cluster, split / delayed clusters (at most 10 per event, delayed ones retried for a day), size cap, linear mech placement, fast position search; the vanilla body is called through a lazily resolved delegate (MethodInfo.Invoke fallback, one warning and plain vanilla clusters if neither works) |
 | `MechPricingPatches.cs` | armored mechanoid pricing for capsules, assemblers, sleeping mechs (gate on the threat, not the local budget), random mech groups |
-| `Uninstall.cs` | "Prepare to remove the mod" button: Hardened lords → vanilla lords (siege crews' pieces made neutral, as vanilla does on the assault; a raid in progress continues: infantry and crews assault, armed vehicles under VF's raid AI, other vehicles leave, stuck ones left in place, captives dropped), waves / markers / registries cleared |
+| `Uninstall.cs` | "Prepare to remove the mod" button: Hardened lords → vanilla lords (siege crews' pieces made neutral, as vanilla does on the assault; a raid in progress continues: infantry and crews assault, armed vehicles under VF's raid AI, other vehicles leave, stuck ones left in place (neutral if the raid was over), captives dropped), waves / markers / registries cleared |
 | `Strings.cs` | player-facing strings (English / French), selected by the mod's language setting |
 | `HRSettings.cs` | settings window, startup |
 | `DebugActions.cs` | dev mode → "Hardened Raids" → raid plan preview / pending waves |

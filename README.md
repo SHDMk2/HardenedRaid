@@ -22,7 +22,7 @@ Vanilla scales raids by adding more and more poorly equipped raiders. Hardened R
 - **Manhunter packs**: up to the neolithic wave cap (300 by default); animal events get rarer when your threat exceeds what they can spend.
 - **Smarter AI**: smart, breach and sapper raids become more common at high tiers, veterans avoid turret fields of fire, and turrets that are out of service (no power, empty magazine, no fuel) are ignored.
 - **Reinforced sieges**: artillery and turrets from mods (Fortifications, VFE Security, CE Armory...; no anti-aircraft guns or spotlights), laid out as a real camp (artillery park at the back, turret arc in front, sandbag lines and parapets built once the guns are up) that holds under fire and keeps shelling you during its assault, and forward support teams during assaults.
-- **Enemy vehicles** (experimental, needs Vehicle Framework + Vanilla Vehicles Expanded): tanks, rocket and artillery fire support, trucks and IFVs, with crews, ammo and fuel. Vehicles are priced by value; rocket swarms and artillery cost much more.
+- **Enemy vehicles** (experimental, needs Vehicle Framework + Vanilla Vehicles Expanded): tanks, rocket and artillery fire support, trucks and IFVs, with crews, ammo and fuel. Vehicles are priced by value; rocket swarms and artillery cost much more. At the end of a raid, vehicles that cannot leave (no driver, immobilized) are left behind as neutral wrecks: select one and press **Claim** (refused while an enemy is within 25 cells), then board, repair or deconstruct it with Vehicle Framework's own tools.
 - **Ammo sanity** (Combat Extended): no antigrain ammo, EMP and biological ammo made rare.
 - **Language option**: English by default, French available (Mod settings → Hardened Raids).
 

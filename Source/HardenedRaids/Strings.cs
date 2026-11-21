@@ -117,6 +117,12 @@ namespace HardenedRaids
             // ---- explosions
             ["ExplosionGuard"] = "Vehicles: no chain explosions",
             ["ExplosionGuardTip"] = "A badly damaged vehicle can still explode when it is hit, but only one explosion at a time, and neither its own explosion nor the fires lit by vehicle explosions can set off its explosive parts again (with Combat Extended, they did at 0 damage, endlessly). Applies to every vehicle, yours included.",
+
+            // --- lot abandon (R21) ---
+            ["ClaimVehicle"] = "Claim",
+            ["ClaimVehicleTip"] = "This vehicle was left behind at the end of a raid and belongs to no one. Claim it for your colony: you can then board, repair or deconstruct it. Refused while an enemy is within {0} cells.",
+            ["ClaimVehicleEnemies"] = "Enemies nearby.",
+            ["MsgVehicleClaimed"] = "{0} now belongs to your colony.",
         };
 
         private static readonly Dictionary<string, string> fr = new Dictionary<string, string>
@@ -226,6 +232,12 @@ namespace HardenedRaids
             // ---- explosions
             ["ExplosionGuard"] = "Véhicules : pas d'explosions en chaîne",
             ["ExplosionGuardTip"] = "Un véhicule très abîmé peut toujours exploser quand on le touche, mais une seule explosion à la fois, et ni sa propre explosion ni les feux allumés par des explosions de véhicules ne relancent ses pièces explosives (avec Combat Extended, ils le faisaient à 0 dégât, sans fin). S'applique à tous les véhicules, les vôtres compris.",
+
+            // --- lot abandon (R21) ---
+            ["ClaimVehicle"] = "Réclamer",
+            ["ClaimVehicleTip"] = "Véhicule laissé sur place à la fin d'un raid, sans propriétaire. Réclamez-le pour votre colonie : vous pourrez ensuite l'embarquer, le réparer ou le démonter. Refusé tant qu'un ennemi est à moins de {0} cases.",
+            ["ClaimVehicleEnemies"] = "Ennemis à proximité.",
+            ["MsgVehicleClaimed"] = "{0} appartient maintenant à votre colonie.",
         };
 
         public static string LanguageName(HRLanguage lang) => lang == HRLanguage.French ? "Français" : "English";

@@ -314,6 +314,36 @@ namespace HardenedRaids
                 if (p.Spawned && retreatLord?.LordJob is LordJob_HRBoard bj) bj.Assign(p);
             }
             HRLog.Msg($"convoi : {v.LabelShort} {(VehicleCompat.NeedsCrew(v) ? "sans pilote" : "immobilisé")}, abandonné.");
+            if (retreating) Release(v);   // lot abandon (R21)
+        }
+
+        // ---- abandon : véhicule abandonné en retraite, sorti du lord et rendu neutre (R21)
+        /// <summary>
+        /// Fin de raid (la retraite ne commence que sur <see cref="RaidOver"/>) : le véhicule laissé sur place quitte le
+        /// lord du convoi et passe en faction nulle, comme les pièces de siège vanilla au passage à l'assaut. Captifs de la
+        /// soute déposés avant (KidnapAboard ne vaut plus pour un véhicule sans faction). Le dernier véhicule libéré
+        /// vide le lord : vanilla le détruit (Lord.Notify_PawnLost -> !ShouldExist). Rien de sauvegardé : au chargement,
+        /// TickRetreat abandonne de nouveau les véhicules sans pilote (20 s de retraite écoulées) et les libère.
+        /// </summary>
+        private void Release(Pawn v)
+        {
+            try
+            {
+                if (!v.Spawned || v.Faction != faction) return;
+                VehicleCompat.DropCaptives(v);
+                abandoned.Remove(v);
+                holding.Remove(v);
+                coverCells.Remove(v);
+                lastFire.Remove(v);
+                leaveStart.Remove(v);
+                unloaded.Remove(v);
+                leaving.Remove(v);
+                dismount.Remove(v);
+                if (v.GetLord() == lord) lord.Notify_PawnLost(v, PawnLostCondition.ForcedToJoinOtherLord);
+                Patch_ClaimVehicle.Release(v);
+                HRLog.Msg($"convoi : {v.LabelShort} laissé neutre (réclamable).");
+            }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] abandoned vehicle release: " + e.Message, 0x48524C53); }
         }
 
         // ------------------------------------------------------------ débarquement d'un véhicule
