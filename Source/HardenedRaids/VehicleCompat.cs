@@ -907,6 +907,8 @@ namespace HardenedRaids
         public static void Apply(HarmonyLib.Harmony harmony)
         {
             if (!VehicleGate.Active) return;
+            Patch_ReactorGuard.Apply(harmony);   // R24 : avant le return anticipé ci-dessous
+            Patch_ClaimVehicle.Apply(harmony);   // lot abandon (R21)
             var m = HarmonyLib.AccessTools.Method("Vehicles.Ext_Vehicles:SpawnPawnNearVehicle");
             if (m == null) { Log.Warning("[Hardened Raids] Ext_Vehicles.SpawnPawnNearVehicle not found: dismounting will use the VF lord."); return; }
             harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_SpawnNearVehicle), nameof(Prefix)));
@@ -919,8 +921,6 @@ namespace HardenedRaids
             Patch_EnemyBrakesVF.Apply(harmony);
             Patch_EnemyIdleDismount.Apply(harmony);
             Patch_TurretKeepTarget.Apply(harmony);
-            Patch_ReactorGuard.Apply(harmony);
-            Patch_ClaimVehicle.Apply(harmony);   // lot abandon (R21)
         }
 
         public static void ExitPrefix2(VehiclePawn vehicle) => ExitPrefix(vehicle);
@@ -1118,6 +1118,8 @@ namespace HardenedRaids
             if (v is not VehiclePawn vp || !vp.Spawned) return;
             try { if (vp.ignition.Drafted) vp.ignition.Drafted = false; }
             catch (Exception e) { Log.WarningOnce("[Hardened Raids] vehicle shutdown: " + e.Message, vp.thingIDNumber ^ 0x4F4646); }
+            Map map = vp.Map;
+            map.GetComponent<ListerVehiclesRepairable>()?.NotifyVehicleDespawned(vp);   // R24 : retiré de la liste de l'ancienne faction
             vp.SetFaction(null);
         }
 
@@ -1162,6 +1164,7 @@ namespace HardenedRaids
             if (v == null || v.Destroyed || !v.Spawned || v.Faction != null) return;
             if (EnemyNear(v)) { Messages.Message(Strings.T("ClaimVehicleEnemies"), v, MessageTypeDefOf.RejectInput, false); return; }
             v.SetFaction(Faction.OfPlayer);
+            v.Map.GetComponent<ListerVehiclesRepairable>()?.NotifyVehicleTookDamage(v);   // R24 : VF ne le fait pas au changement de faction
             Messages.Message(Strings.T("MsgVehicleClaimed", v.LabelShort), v, MessageTypeDefOf.PositiveEvent, false);
             HRLog.Msg($"{v.LabelShort} réclamé par le joueur.");
         }

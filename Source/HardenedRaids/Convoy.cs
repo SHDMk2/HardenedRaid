@@ -558,7 +558,11 @@ namespace HardenedRaids
             int now = Find.TickManager.TicksGame;
             Map map = Map;
             if (now % 600 == 0) Job.PurgeDeadRefs(map);
-            if (slots.Count == 0 && Job.SiegeSpot(map).IsValid) ComputeStaging();   // R22 : après un chargement (slots non sauvegardés)
+            if (slots.Count == 0 && Job.SiegeSpot(map).IsValid)   // R22 : après un chargement (slots non sauvegardés)
+            {
+                ComputeStaging();
+                if (slots.Count > 0) UpdateAllDuties();   // R24 : la duty sauvegardée vise encore l'ancienne ligne d'arrêt
+            }
             foreach (Pawn v in lord.ownedPawns.ToList())
             {
                 if (!v.Spawned || Job.unloaded.Contains(v)) continue;
@@ -1064,11 +1068,12 @@ namespace HardenedRaids
         protected override IEnumerable<Toil> MakeNewToils()
         {
             this.FailOnDespawnedOrNull(TargetIndex.A);
+            this.FailOn(() => job.targetA.Thing is Pawn tv && tv.Faction != pawn.Faction);   // R24 : véhicule libéré (neutre) pendant la course
             yield return Toils_Goto.GotoThing(TargetIndex.A, PathEndMode.Touch);
             Toil board = ToilMaker.MakeToil("HRBoard");
             board.initAction = () =>
             {
-                if (job.targetA.Thing is not Pawn v) { EndJobWith(JobCondition.Incompletable); return; }
+                if (job.targetA.Thing is not Pawn v || v.Faction != pawn.Faction) { EndJobWith(JobCondition.Incompletable); return; }   // R24
                 VehicleCompat.StowCarried(v, pawn);
                 bool driver = pawn.GetLord()?.LordJob is LordJob_HRBoard b && b.drivers.Contains(pawn);
                 if (!VehicleCompat.TryBoard(v, pawn, driver)) EndJobWith(JobCondition.Incompletable);
@@ -1135,9 +1140,12 @@ namespace HardenedRaids
             IntVec3 spot = SiegeSpot(map);
             if (!spot.IsValid) return false;
             if (!target.IsValid) target = Patch_SiegeBlueprints.ThreatTarget(map, spot);   // même cible que le plan du camp
-            if (stagingCenter != spot) HRLog.Msg($"convoi de siège {faction?.Name} : arrêt au camp {spot} (cible {target}), camions derrière, blindés sur les flancs.");
-            stagingCenter = spot;
-            deployTurrets = false;   // tourelle de camion : elle tomberait dans le plan du camp
+            if (slots != null)   // R24 : seulement depuis l'approche ; SiegeHoldCell (slots nul) ne réécrit pas ces champs sauvegardés
+            {
+                if (stagingCenter != spot) HRLog.Msg($"convoi de siège {faction?.Name} : arrêt au camp {spot} (cible {target}), camions derrière, blindés sur les flancs.");
+                stagingCenter = spot;
+                deployTurrets = false;   // tourelle de camion : elle tomberait dans le plan du camp
+            }
             Vector2 axis = new Vector2(target.x - spot.x, target.z - spot.z);
             axis = axis.sqrMagnitude < 1f ? Vector2.up : axis.normalized;
             Vector2 perp = new Vector2(-axis.y, axis.x);
