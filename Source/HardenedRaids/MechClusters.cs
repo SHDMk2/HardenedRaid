@@ -95,10 +95,7 @@ namespace HardenedRaids
     [HarmonyPatch(typeof(IncidentWorker_MechCluster), "TryExecuteWorker")]
     public static class Patch_MechClusterIncident
     {
-        private static readonly Func<IncidentWorker_MechCluster, IncidentParms, bool> Exec =
-            AccessTools.MethodDelegate<Func<IncidentWorker_MechCluster, IncidentParms, bool>>(
-                AccessTools.Method(typeof(IncidentWorker_MechCluster), "TryExecuteWorker"), null, false, null);
-
+        // R23 : l'appel du corps vanilla vit dans MechClusterExec (fin de fichier), résolu paresseusement et sans lever.
         /// <summary>
         /// R9 : parms dont l'exécution a échoué (croquis fait, puis pas d'emplacement ou exception). Une grappe différée de
         /// la file garde ses parms entre les réessais : elle n'est plus réexécutée et sera abandonnée en fin de fenêtre.
@@ -114,6 +111,7 @@ namespace HardenedRaids
             if (parms.target is not Map map) return true;
             int needed = ClusterSplit.CountFor(parms.points);
             if (needed <= 1) return true;
+            if (!MechClusterExec.Ready) return true;            // R23 : appel impossible -> grappe vanilla (plafonnée)
             float total = parms.points, per = total / needed;   // chaque grappe ≤ budget, même plafonnées
             int n = ClusterSplit.Capped(needed);
             int simult = Mathf.Min(n, ClusterSplit.MaxSimultaneous), spawned = 0;
@@ -126,7 +124,7 @@ namespace HardenedRaids
                     bool ok;
                     ClusterSplit.Reentrant = true;
                     ClusterSplit.Strict = i > 0;
-                    try { ok = Exec(__instance, parms); }   // corps vanilla (lettre comprise), points d'une grappe
+                    try { ok = MechClusterExec.Invoke(__instance, parms); }   // corps vanilla (lettre comprise), points d'une grappe
                     catch (Exception e)
                     {
                         Log.Error("[Hardened Raids] mech cluster " + (i + 1) + "/" + n + " failed: " + e);
@@ -555,6 +553,78 @@ namespace HardenedRaids
                 for (int k = 0; k < things.Count; k++) if (things[k].def.preventSkyfallersLandingOn) return false;
                 if (!tooClose && nearColony[map.cellIndices.CellToIndex(x)]) tooClose = true;
                 return true;
+            }
+        }
+    }
+
+    // ---- grappes : appel du corps de IncidentWorker_MechCluster.TryExecuteWorker (R23)
+    //
+    // Avant R23 : champ statique AccessTools.MethodDelegate<Func<IncidentWorker_MechCluster, IncidentParms, bool>>(m, null,
+    // virtualCall: false). Pour un délégué ouvert non virtuel, Harmony (2.4.2 et 3.0, même code) prend comme paramètres de
+    // la DynamicMethod les arguments génériques du type délégué quand ils sont plus nombreux que (this + paramètres) :
+    // pour un Func, le type de retour bool est compté -> (IMC, IncidentParms, bool) au lieu de (IMC, IncidentParms), et
+    // DynamicMethod.CreateDelegate refuse la signature. L'exception, levée dans le constructeur statique, rendait la
+    // classe du patch inutilisable : chaque grappe mécas (même sous le budget) levait TypeInitializationException.
+    //
+    // Sémantique : on appelle la méthode d'origine par son point d'entrée, donc à travers le remplacement Harmony (nos
+    // prefix / postfix / finalizer, gardés par ClusterSplit.Reentrant, et les patchs des autres mods, comme pour une
+    // grappe vanilla). Appel virtuel ou non : identique, aucune sous-classe de IncidentWorker_MechCluster dans le jeu ni
+    // dans les mods installés. Si le runtime contournait le détour, on obtiendrait le corps vanilla nu : résultat
+    // identique pour la scission (Reentrant sert justement à neutraliser nos patchs).
+    //
+    // Voies, résolues une fois au premier besoin, jamais dans un constructeur statique : délégué ouvert
+    // Delegate.CreateDelegate (dispatch virtuel, sans DynamicMethod), sinon MethodInfo.Invoke mis en cache. Si la méthode
+    // est introuvable : un seul Log.Warning, et le prefix laisse faire le vanilla (une grappe plafonnée). Rien de sauvegardé.
+    internal static class MechClusterExec
+    {
+        private static System.Reflection.MethodInfo method;
+        private static Func<IncidentWorker_MechCluster, IncidentParms, bool> call;
+        private static bool resolved, failed;
+
+        /// <summary>Vrai si le corps vanilla peut être appelé ; résolution paresseuse, ne lève jamais.</summary>
+        internal static bool Ready
+        {
+            get
+            {
+                if (!resolved) Resolve();
+                return !failed;
+            }
+        }
+
+        private static void Resolve()
+        {
+            resolved = true;
+            try
+            {
+                method = typeof(IncidentWorker_MechCluster).GetMethod("TryExecuteWorker",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
+                    null, new[] { typeof(IncidentParms) }, null);
+            }
+            catch (Exception e) { method = null; Fail(e.GetType().Name + ": " + e.Message); return; }
+            if (method == null || method.ReturnType != typeof(bool)) { method = null; Fail("TryExecuteWorker(IncidentParms) not found"); return; }
+            try { call = (Func<IncidentWorker_MechCluster, IncidentParms, bool>)Delegate.CreateDelegate(typeof(Func<IncidentWorker_MechCluster, IncidentParms, bool>), method); }
+            catch (Exception e)
+            {
+                call = null;   // repli sur MethodInfo.Invoke, qui marche toujours sur une méthode trouvée
+                HRLog.Msg("grappes mécanoïdes : délégué indisponible (" + e.GetType().Name + "), repli sur MethodInfo.Invoke");
+            }
+        }
+
+        private static void Fail(string why)
+        {
+            failed = true;
+            Log.Warning("[Hardened Raids] mech cluster split disabled, vanilla clusters used instead: " + why);
+        }
+
+        /// <summary>Corps de TryExecuteWorker ; à n'appeler qu'après Ready. Les exceptions du corps remontent telles quelles.</summary>
+        internal static bool Invoke(IncidentWorker_MechCluster worker, IncidentParms parms)
+        {
+            if (call != null) return call(worker, parms);
+            try { return (bool)method.Invoke(worker, new object[] { parms }); }
+            catch (System.Reflection.TargetInvocationException e) when (e.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e.InnerException).Throw();
+                throw;
             }
         }
     }
