@@ -117,6 +117,8 @@ namespace HardenedRaids
             // ---- explosions
             ["ExplosionGuard"] = "Vehicles: no chain explosions",
             ["ExplosionGuardTip"] = "A badly damaged vehicle can still explode when it is hit, but only one explosion at a time, and neither its own explosion nor the fires lit by vehicle explosions can set off its explosive parts again (with Combat Extended, they did at 0 damage, endlessly). Applies to every vehicle, yours included.",
+            ["FireproofVehicles"] = "Vehicles: fireproof",
+            ["FireproofVehiclesTip"] = "Fire no longer clings to vehicles and vehicles no longer feed the fires on their cells. Without this, a burning vehicle burns forever (it is never destroyed), and with Combat Extended the fuel leaking from a damaged tank sets it on fire on its own. Flamethrowers and fire explosions still deal their direct damage. Applies to every vehicle, yours included; takes effect immediately.",
 
             // --- lot abandon (R21) ---
             ["ClaimVehicle"] = "Claim",
@@ -232,6 +234,8 @@ namespace HardenedRaids
             // ---- explosions
             ["ExplosionGuard"] = "Véhicules : pas d'explosions en chaîne",
             ["ExplosionGuardTip"] = "Un véhicule très abîmé peut toujours exploser quand on le touche, mais une seule explosion à la fois, et ni sa propre explosion ni les feux allumés par des explosions de véhicules ne relancent ses pièces explosives (avec Combat Extended, ils le faisaient à 0 dégât, sans fin). S'applique à tous les véhicules, les vôtres compris.",
+            ["FireproofVehicles"] = "Véhicules : ininflammables",
+            ["FireproofVehiclesTip"] = "Le feu ne s'accroche plus aux véhicules et les véhicules n'alimentent plus les feux de leurs cases. Sans ce réglage, un véhicule en feu brûle pour toujours (il n'est jamais détruit), et avec Combat Extended le carburant qui fuit d'un réservoir abîmé l'enflamme tout seul. Les lance-flammes et les explosions de feu font toujours leurs dégâts directs. S'applique à tous les véhicules, les vôtres compris ; effet immédiat.",
 
             // --- lot abandon (R21) ---
             ["ClaimVehicle"] = "Réclamer",

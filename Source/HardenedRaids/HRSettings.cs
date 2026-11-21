@@ -61,6 +61,7 @@ namespace HardenedRaids
         public static float SupportShare = 0.12f;  // part des raiders qui montent le camp d'appui
         // ---- explosions : réacteurs explosifs VF relancés sans fin sous CE
         public static bool VehicleExplosionGuard = true; // une explosion en attente par véhicule, ni auto-relance ni relance par le feu
+        public static bool FireproofVehicles = true;     // Flammability 0 : le feu ne s'accroche plus aux véhicules (v1.12)
 
         // --- lot uncap ---
         public static float SettlementThreatShare = 0.25f; // défenseurs des colonies hostiles : part de la menace du joueur
@@ -117,6 +118,7 @@ namespace HardenedRaids
             Scribe_Values.Look(ref SupportShare, "SupportShare", 0.12f);
             // ---- explosions
             Scribe_Values.Look(ref VehicleExplosionGuard, "VehicleExplosionGuard", true);
+            Scribe_Values.Look(ref FireproofVehicles, "FireproofVehicles", true);
             // --- lot uncap ---
             Scribe_Values.Look(ref SettlementThreatShare, "SettlementThreatShare", 0.25f);
             Scribe_Values.Look(ref SettlementVehicles, "SettlementVehicles", true);
@@ -236,6 +238,7 @@ namespace HardenedRaids
             MaxTruckTurrets = (int)l.SliderLabeled(Strings.T("MaxTruckTurrets", MaxTruckTurrets), MaxTruckTurrets, 0, 10, 0.5f);
             // ---- explosions
             l.CheckboxLabeled(Strings.T("ExplosionGuard"), ref VehicleExplosionGuard, Strings.T("ExplosionGuardTip"));
+            l.CheckboxLabeled(Strings.T("FireproofVehicles"), ref FireproofVehicles, Strings.T("FireproofVehiclesTip"));
 
             viewHeight = l.MaxColumnHeightSeen + 12f;
             l.End();
@@ -280,6 +283,13 @@ namespace HardenedRaids
         public override string SettingsCategory() => "Hardened Raids";
 
         public override void DoSettingsWindowContents(Rect inRect) => HRSettings.DoWindow(inRect);
+
+        public override void WriteSettings()
+        {
+            base.WriteSettings();
+            if (!VehicleGate.Active) return;
+            try { VehicleFireproof.Apply(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] fireproof vehicles: " + e.Message); }
+        }
     }
 
     [StaticConstructorOnStartup]
@@ -291,6 +301,8 @@ namespace HardenedRaids
             try { CECompat.TuneAmmoChances(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] CE ammo: " + e.Message); }
             Loadouts.BuildCaches();
             try { Patch_SiegeBlueprints.EnsureCatalog(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] siege catalog: " + e.Message); }
+            if (VehicleGate.Active)
+                try { VehicleFireproof.Apply(); } catch (System.Exception e) { Log.Warning("[Hardened Raids] fireproof vehicles: " + e.Message); }
         }
     }
 

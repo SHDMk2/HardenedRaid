@@ -1090,6 +1090,42 @@ namespace HardenedRaids
         }
     }
 
+    // ---- feu : véhicules ininflammables (v1.12)
+    /// <summary>
+    /// VVE donne <c>Flammability 0.5</c> à ses véhicules (la base VF est à 0). Le feu s'accroche donc au véhicule et
+    /// le véhicule sert de combustible aux feux de ses cases (<c>Fire.DoComplexCalcs</c>) sans jamais être détruit :
+    /// le feu ne s'éteint plus. Sous CE, <c>Filth_Fuel</c> devient <c>IncendiaryFuel</c> (s'allume seul et accroche le
+    /// feu à ce qui est sur sa case) : la fuite d'un réservoir abîmé (<c>Reactor_FuelLeak</c>, réveillée par une
+    /// réparation ou un dégât) met le feu au véhicule, pour toujours. Flammability 0 sur toutes les VehicleDef :
+    /// <c>CanEverAttachFire</c> refuse, les feux ne prennent plus le véhicule pour combustible, et les feux déjà
+    /// accrochés s'éteignent au calcul suivant. Les dégâts directs (lance-flammes, explosions Flame) restent.
+    /// Réglage FireproofVehicles, réversible en jeu (valeurs d'origine gardées) ; rien de sauvegardé.
+    /// </summary>
+    public static class VehicleFireproof
+    {
+        private static Dictionary<ThingDef, float> original;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        public static void Apply()
+        {
+            if (original == null)
+            {
+                original = new Dictionary<ThingDef, float>();
+                foreach (VehicleDef v in DefDatabase<VehicleDef>.AllDefsListForReading)
+                {
+                    StatModifier m = v.statBases?.FirstOrDefault(s => s.stat == StatDefOf.Flammability);
+                    if (m != null && m.value > 0f) original[v] = m.value;
+                }
+            }
+            foreach (KeyValuePair<ThingDef, float> kv in original)
+            {
+                StatModifier m = kv.Key.statBases.First(s => s.stat == StatDefOf.Flammability);
+                m.value = HRSettings.FireproofVehicles ? 0f : kv.Value;
+            }
+            HRLog.Msg($"véhicules ininflammables : {(HRSettings.FireproofVehicles ? "oui" : "non")} ({original.Count} définitions)");
+        }
+    }
+
     // ---- abandon : véhicules abandonnés en fin de raid, neutres et réclamables (R21)
     /// <summary>
     /// Véhicule laissé sur place en fin de raid (<see cref="LordJob_HRConvoy"/>, retraite) : faction nulle, puis bouton
