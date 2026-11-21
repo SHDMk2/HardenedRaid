@@ -114,6 +114,12 @@ namespace HardenedRaids
             ["PrepUninstallConfirm"] = "Prepare this game for removing Hardened Raids?\n\nA raid in progress continues as vanilla: infantry and turret crews assault, armed vehicles keep fighting under Vehicle Framework's raid AI, other vehicles leave, immobilized ones are left in place and captives aboard are dropped; groups already retreating leave. Pending waves are cancelled, turret resupply stops and the internal tier marker is removed from every pawn.\n\nThen save, and remove the mod before loading that save.",
             ["PrepUninstallDone"] = "Hardened Raids is ready to be removed: {0} group(s) converted, {1} pending wave(s) cancelled, {2} marker(s) removed. The game is paused.\n\nSave now, then remove the mod before loading the save. Keep playing with the mod and it will start again.",
             ["PrepUninstallErrors"] = "{0} error(s) occurred, see the log.",
+
+            // --- lot abandon (R21) ---
+            ["ClaimVehicle"] = "Claim",
+            ["ClaimVehicleTip"] = "This vehicle was left behind at the end of a raid and belongs to no one. Claim it for your colony: you can then board, repair or deconstruct it. Refused while an enemy is within {0} cells.",
+            ["ClaimVehicleEnemies"] = "Enemies nearby.",
+            ["MsgVehicleClaimed"] = "{0} now belongs to your colony.",
         };
 
         private static readonly Dictionary<string, string> fr = new Dictionary<string, string>
@@ -220,6 +226,12 @@ namespace HardenedRaids
             ["PrepUninstallConfirm"] = "Préparer cette partie au retrait de Hardened Raids ?\n\nUn raid en cours continue en vanilla : infanterie et servants de tourelles à l'assaut, blindés armés sous l'IA de raid de Vehicle Framework, autres véhicules qui repartent, véhicules immobilisés laissés sur place, captifs à bord déposés ; les groupes déjà en retraite partent. Les vagues en attente sont annulées, le ravitaillement des tourelles s'arrête et le marqueur interne de palier est retiré de tous les pawns.\n\nEnsuite, sauvegardez, puis retirez le mod avant de charger cette sauvegarde.",
             ["PrepUninstallDone"] = "Hardened Raids peut être retiré : {0} groupe(s) converti(s), {1} vague(s) en attente annulée(s), {2} marqueur(s) retiré(s). Le jeu est en pause.\n\nSauvegardez maintenant, puis retirez le mod avant de charger la sauvegarde. Si vous continuez à jouer avec le mod, il reprend.",
             ["PrepUninstallErrors"] = "{0} erreur(s), voir le journal.",
+
+            // --- lot abandon (R21) ---
+            ["ClaimVehicle"] = "Réclamer",
+            ["ClaimVehicleTip"] = "Véhicule laissé sur place à la fin d'un raid, sans propriétaire. Réclamez-le pour votre colonie : vous pourrez ensuite l'embarquer, le réparer ou le démonter. Refusé tant qu'un ennemi est à moins de {0} cases.",
+            ["ClaimVehicleEnemies"] = "Ennemis à proximité.",
+            ["MsgVehicleClaimed"] = "{0} appartient maintenant à votre colonie.",
         };
 
         public static string LanguageName(HRLanguage lang) => lang == HRLanguage.French ? "Français" : "English";

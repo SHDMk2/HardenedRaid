@@ -155,8 +155,9 @@ namespace HardenedRaids
                 Faction f = l.faction;
                 // Véhicule qui ne peut ni partir ni se battre (camion garé dont le pilote est descendu, véhicule immobilisé) :
                 // VF ne fait pas sortir un véhicule sans équipage (JobGiver_ExitMap ne donne aucun job, il resterait pour
-                // toujours dans son lord) -> laissé sur place sans lord, comme un véhicule abandonné du convoi (VF le rend
-                // revendicable une fois la faction partie) ; ses occupants descendent et rejoignent l'infanterie ou la sortie.
+                // toujours dans son lord) -> laissé sur place sans lord ; ses occupants descendent et rejoignent l'infanterie
+                // ou la sortie. Retraite : rendu neutre, comme un véhicule abandonné du convoi (R21 ; VF seul ne le rend jamais
+                // revendicable : ClaimableBy exige def.building). Raid en cours : il garde sa faction.
                 var stranded = new HashSet<Pawn>(l.ownedPawns.Where(v => StrandedVF(v, fight: !leave)));
                 // DU5 : fantassin du lord du convoi (débarqué que VF a remis dans le lord du véhicule, sans notre prefix de
                 // SpawnPawnNearVehicle) : ni blindé ni camion, il rejoint l'infanterie (raid en cours) ou la sortie
@@ -184,6 +185,7 @@ namespace HardenedRaids
                 {
                     List<Pawn> down = EmptyOutVF(v);
                     foreach (Pawn p in down) Join(p);
+                    if (leave) ReleaseVF(v);   // lot abandon (R21)
                     HRLog.Msg($"désactivation : {v.LabelShort} ne peut ni partir ni se battre, laissé sur place ({down.Count} occupant(s) descendu(s)).");
                 }
             }
@@ -211,6 +213,10 @@ namespace HardenedRaids
 
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void DropCaptivesVF(Pawn v) => VehicleCompat.DropCaptives(v);
+
+        // ---- abandon : véhicule laissé sur place en retraite, rendu neutre (R21)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void ReleaseVF(Pawn v) => Patch_ClaimVehicle.Release(v);
 
         /// <summary>
         /// Véhicule qui ne peut ni partir ni se battre : sans pilote (après avoir mis un passager au volant) ou immobilisé. Pendant

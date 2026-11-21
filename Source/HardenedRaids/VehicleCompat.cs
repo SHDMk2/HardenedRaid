@@ -919,6 +919,7 @@ namespace HardenedRaids
             Patch_EnemyBrakesVF.Apply(harmony);
             Patch_EnemyIdleDismount.Apply(harmony);
             Patch_TurretKeepTarget.Apply(harmony);
+            Patch_ClaimVehicle.Apply(harmony);   // lot abandon (R21)
         }
 
         public static void ExitPrefix2(VehiclePawn vehicle) => ExitPrefix(vehicle);
@@ -1039,6 +1040,83 @@ namespace HardenedRaids
             VehiclePawn v = turret?.vehicle;
             if (v?.Faction == null || v.Faction.IsPlayer) return;
             if (target.Thing is Building_Turret t && t.ThreatDisabled(v)) __result = false;
+        }
+    }
+
+    // ---- abandon : véhicules abandonnés en fin de raid, neutres et réclamables (R21)
+    /// <summary>
+    /// Véhicule laissé sur place en fin de raid (<see cref="LordJob_HRConvoy"/>, retraite) : faction nulle, puis bouton
+    /// « Réclamer » pour le joueur. VF n'offre aucune voie : <c>VehiclePawn.ClaimableBy</c> est faux sans
+    /// <c>def.building</c> (donc aussi <c>DeconstructibleBy</c>), et l'embarquement par menu contextuel exige la même
+    /// faction (<c>VehiclePawn.GetFloatMenuOptions</c>). Réclamation instantanée, refusée si un ennemi actif (pawn
+    /// debout, véhicule avec équipage) est à moins de <see cref="EnemyRadius"/> cases. Pas de JobDef, rien de sauvegardé
+    /// (la faction du véhicule l'est déjà par le jeu). Une fois au joueur : démontage, embarquement, réparation VF.
+    /// Patch manuel (VF optionnel), enregistré par <see cref="Patch_SpawnNearVehicle.Apply"/>.
+    /// </summary>
+    public static class Patch_ClaimVehicle
+    {
+        public const float EnemyRadius = 25f;
+        private static Texture2D icon;
+
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method(typeof(VehiclePawn), nameof(VehiclePawn.GetGizmos));
+            if (m == null) { Log.Warning("[Hardened Raids] VehiclePawn.GetGizmos not found: abandoned vehicles cannot be claimed."); return; }
+            harmony.Patch(m, postfix: new HarmonyLib.HarmonyMethod(typeof(Patch_ClaimVehicle), nameof(Postfix)));
+        }
+
+        /// <summary>Sortie du lord faite par l'appelant ; ici : moteur coupé (sans équipage) et faction nulle.</summary>
+        public static void Release(Pawn v)
+        {
+            if (v is not VehiclePawn vp || !vp.Spawned) return;
+            try { if (vp.ignition.Drafted) vp.ignition.Drafted = false; }
+            catch (Exception e) { Log.WarningOnce("[Hardened Raids] vehicle shutdown: " + e.Message, vp.thingIDNumber ^ 0x4F4646); }
+            vp.SetFaction(null);
+        }
+
+        public static void Postfix(VehiclePawn __instance, ref IEnumerable<Gizmo> __result)
+        {
+            if (__instance == null || __instance.Faction != null || !__instance.Spawned || __instance.Destroyed) return;
+            Map map = __instance.Map;
+            if (!map.IsPlayerHome && map.mapPawns.FreeColonistsSpawnedCount == 0) return;   // carte du joueur
+            __result = __result.Append(MakeCommand(__instance));
+        }
+
+        private static Command_Action MakeCommand(VehiclePawn v)
+        {
+            icon ??= ContentFinder<Texture2D>.Get("UI/Designators/Claim", false) ?? BaseContent.BadTex;
+            var cmd = new Command_Action
+            {
+                defaultLabel = Strings.T("ClaimVehicle"),
+                defaultDesc = Strings.T("ClaimVehicleTip", Mathf.RoundToInt(EnemyRadius)),
+                icon = icon,
+                action = () => Claim(v),
+            };
+            if (EnemyNear(v)) cmd.Disable(Strings.T("ClaimVehicleEnemies"));
+            return cmd;
+        }
+
+        /// <summary>Ennemi actif du joueur à moins de EnemyRadius cases : pawn debout et éveillé, ou véhicule avec quelqu'un à bord.</summary>
+        public static bool EnemyNear(VehiclePawn v)
+        {
+            Map map = v.Map;
+            foreach (Verse.AI.IAttackTarget t in map.attackTargetsCache.TargetsHostileToFaction(Faction.OfPlayer))
+            {
+                Thing th = t.Thing;
+                if (th == null || th == v || !th.Spawned || !th.Position.InHorDistOf(v.Position, EnemyRadius)) continue;
+                if (th is VehiclePawn ov) { if (ov.AllPawnsAboard.Any()) return true; continue; }
+                if (GenHostility.IsActiveThreatToPlayer(t)) return true;
+            }
+            return false;
+        }
+
+        private static void Claim(VehiclePawn v)
+        {
+            if (v == null || v.Destroyed || !v.Spawned || v.Faction != null) return;
+            if (EnemyNear(v)) { Messages.Message(Strings.T("ClaimVehicleEnemies"), v, MessageTypeDefOf.RejectInput, false); return; }
+            v.SetFaction(Faction.OfPlayer);
+            Messages.Message(Strings.T("MsgVehicleClaimed", v.LabelShort), v, MessageTypeDefOf.PositiveEvent, false);
+            HRLog.Msg($"{v.LabelShort} réclamé par le joueur.");
         }
     }
 }
