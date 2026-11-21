@@ -18,7 +18,7 @@ namespace HardenedRaids
     /// Les fantassins débarqués gardent le lord d'infanterie du raid.
     /// Aucun type de VF ici : tout passe par VehicleCompat (chargé seulement si VF est actif).
     /// </summary>
-    public class LordJob_HRConvoy : LordJob
+    public partial class LordJob_HRConvoy : LordJob
     {
         public Faction faction;
         public Lord infantryLord;
@@ -432,6 +432,7 @@ namespace HardenedRaids
                 return VehicleCompat.TravelDuty(cov);
             if (retreating || holding.Contains(v) || VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v))
                 return VehicleCompat.TravelDuty(v.Position);   // retraite : on tient la position / pièce en batterie
+            if (VehicleCompat.HasTurrets(v) && VehicleCompat.CanMove(v) && SiegeHold()) return VehicleCompat.TravelDuty(SiegeHoldCell(v));   // R22 (D5)
             return VehicleCompat.HasTurrets(v) && VehicleCompat.CanMove(v)
                 ? VehicleCompat.AssaultDuty()
                 : VehicleCompat.TravelDuty(v.Position);   // camion garé
@@ -509,6 +510,7 @@ namespace HardenedRaids
             Map map = Map;
             List<Pawn> vehicles = lord.ownedPawns.Where(p => p.Spawned).ToList();
             if (vehicles.Count == 0) return;
+            if (Job.SiegeStaging(map, vehicles, slots)) return;   // R22 (D4) : convoi d'un siège, arrêt au camp
             var from = new IntVec3((int)vehicles.Average(v => v.Position.x), 0, (int)vehicles.Average(v => v.Position.z));
             if (!Job.target.IsValid) Job.target = Patch_SiegeBlueprints.ThreatTarget(map, from);
             if (!Job.stagingCenter.IsValid)
@@ -556,6 +558,7 @@ namespace HardenedRaids
             int now = Find.TickManager.TicksGame;
             Map map = Map;
             if (now % 600 == 0) Job.PurgeDeadRefs(map);
+            if (slots.Count == 0 && Job.SiegeSpot(map).IsValid) ComputeStaging();   // R22 : après un chargement (slots non sauvegardés)
             foreach (Pawn v in lord.ownedPawns.ToList())
             {
                 if (!v.Spawned || Job.unloaded.Contains(v)) continue;
@@ -569,6 +572,7 @@ namespace HardenedRaids
                 if (arrived || hit || stuck || !VehicleCompat.CanMove(v)) Job.Unload(v, map);
             }
             foreach (Pawn v in lord.ownedPawns.ToList()) Job.TickFireSupport(v, now);
+            Job.TickSiegeSupport(map, now);   // R22 (D5)
             if (Job.RaidOver(map)) { lord.ReceiveMemo(LordJob_HRConvoy.MemoRetreat); return; }
             if (lord.ownedPawns.All(v => Job.unloaded.Contains(v) || !v.Spawned)) lord.ReceiveMemo(LordJob_HRConvoy.MemoAllUnloaded);
         }
@@ -609,6 +613,7 @@ namespace HardenedRaids
                 if (now % 240 == 0) VehicleCompat.Ready(v);
                 Job.TickFireSupport(v, now);
             }
+            Job.TickSiegeSupport(Map, now);   // R22 (D5)
             if (Job.RaidOver(Map)) lord.ReceiveMemo(LordJob_HRConvoy.MemoRetreat);
         }
     }
@@ -1070,6 +1075,137 @@ namespace HardenedRaids
             };
             board.defaultCompleteMode = ToilCompleteMode.Instant;
             yield return board;
+        }
+    }
+
+    // ---- siege : convoi d'un siège motorisé (R22)
+    /// <summary>
+    /// Convoi qui accompagne un <see cref="LordJob_Siege"/> (son lord d'infanterie) :
+    ///  - (D4) ligne d'arrêt = point de siège : les camions se garent DERRIÈRE le camp (côté opposé à la cible,
+    ///    hors du plan de <see cref="SiegeCamp.Radius"/> cases), les blindés sur ses flancs ; les passagers
+    ///    débarquent donc au camp, pas devant la base ; pas de tourelle de camion (le camp a les siennes) ;
+    ///  - (D5) blindés en appui au camp (position tenue, appui-feu existant) tant que le siège voyage, se défend
+    ///    ou tient son camp ; assaut quand le siège passe à l'assaut.
+    /// Tout se déduit du lord d'infanterie (son LordJob et son toil courant) : rien de nouveau n'est sauvegardé
+    /// (stagingCenter, target et deployTurrets sont des champs déjà sauvegardés).
+    /// </summary>
+    public partial class LordJob_HRConvoy
+    {
+        private Dictionary<Pawn, IntVec3> siegeHold;   // non sauvegardé : recalculé depuis le point de siège
+        private bool? siegeHoldWas;                    // non sauvegardé : dernier état vu (null = pas encore vu)
+
+        private static HarmonyLib.AccessTools.FieldRef<LordJob_Siege, IntVec3> siegeSpotRef;
+        private static bool siegeSpotTried;
+
+        /// <summary>Point de siège du lord d'infanterie (champ privé LordJob_Siege.siegeSpot), Invalid si ce n'est pas un siège.</summary>
+        public IntVec3 SiegeSpot(Map map)
+        {
+            if (map == null || infantryLord?.LordJob is not LordJob_Siege sj || !map.lordManager.lords.Contains(infantryLord)) return IntVec3.Invalid;
+            if (!siegeSpotTried)
+            {
+                siegeSpotTried = true;
+                try { siegeSpotRef = HarmonyLib.AccessTools.FieldRefAccess<LordJob_Siege, IntVec3>("siegeSpot"); }
+                catch (Exception e) { Log.Warning("[Hardened Raids] LordJob_Siege.siegeSpot not found, using the siege toil's flag: " + e.Message); }
+            }
+            IntVec3 s = siegeSpotRef != null ? siegeSpotRef(sj) : IntVec3.Invalid;
+            if (!s.IsValid || !s.InBounds(map))   // repli : le drapeau du toil de siège (même valeur, posée par CreateGraph)
+                s = infantryLord.Graph?.lordToils?.OfType<LordToil_Siege>().FirstOrDefault()?.FlagLoc ?? IntVec3.Invalid;
+            return s.IsValid && s.InBounds(map) ? s : IntVec3.Invalid;
+        }
+
+        /// <summary>
+        /// Siège en voyage, en défense (toil DefendPoint du sous-graphe de voyage : LordJob_AssaultColony n'en a
+        /// pas) ou dans son camp : les blindés restent en appui. Ensuite (assaut, fuite, lord disparu) : assaut.
+        /// </summary>
+        public bool SiegeHold()
+        {
+            if (retreating || infantryLord?.LordJob is not LordJob_Siege) return false;
+            Map map = lord?.Map;
+            if (map == null || !map.lordManager.lords.Contains(infantryLord)) return false;
+            LordToil t = infantryLord.CurLordToil;
+            return t is LordToil_Travel || t is LordToil_DefendPoint || t is LordToil_Siege;
+        }
+
+        /// <summary>
+        /// Emplacements au camp. Appelé par <see cref="LordToil_HRConvoyApproach"/> (slots non nul) ou pour retrouver
+        /// la position d'appui des blindés après un chargement (slots nul). Faux si le convoi n'accompagne pas un siège.
+        /// </summary>
+        public bool SiegeStaging(Map map, List<Pawn> vehicles, Dictionary<Pawn, IntVec3> slots)
+        {
+            IntVec3 spot = SiegeSpot(map);
+            if (!spot.IsValid) return false;
+            if (!target.IsValid) target = Patch_SiegeBlueprints.ThreatTarget(map, spot);   // même cible que le plan du camp
+            if (stagingCenter != spot) HRLog.Msg($"convoi de siège {faction?.Name} : arrêt au camp {spot} (cible {target}), camions derrière, blindés sur les flancs.");
+            stagingCenter = spot;
+            deployTurrets = false;   // tourelle de camion : elle tomberait dans le plan du camp
+            Vector2 axis = new Vector2(target.x - spot.x, target.z - spot.z);
+            axis = axis.sqrMagnitude < 1f ? Vector2.up : axis.normalized;
+            Vector2 perp = new Vector2(-axis.y, axis.x);
+            var center = new Vector2(spot.x, spot.z);
+            // le plan du camp (et sa couverture) est interdit aux véhicules
+            var taken = new HashSet<IntVec3>(GenRadial.RadialCellsAround(spot, SiegeCamp.Radius + 2f, true));
+            siegeHold = new Dictionary<Pawn, IntVec3>();
+            slots?.Clear();
+            int trucks = 0, armored = 0;
+            foreach (Pawn v in vehicles.Where(v => v.Spawned).OrderBy(v => VehicleCompat.HasTurrets(v) ? 1 : 0).ThenBy(v => v.thingIDNumber))
+            {
+                bool turrets = VehicleCompat.HasTurrets(v);
+                Vector2 p;
+                if (!turrets)
+                {
+                    // camions : rangs de 8 de front, à 21 cases derrière le drapeau, puis tous les 9 cases
+                    int rank = trucks / 8, file = trucks % 8;
+                    float lateral = (file % 2 == 0 ? 1 : -1) * ((file + 1) / 2) * 7f;
+                    p = center - axis * (SiegeCamp.Radius + 6f + rank * 9f) + perp * lateral;
+                    trucks++;
+                }
+                else
+                {
+                    // blindés : flancs gauche / droit à 22 cases du drapeau, en échelon vers l'arrière
+                    float side = armored % 2 == 0 ? 1f : -1f;
+                    p = center + perp * side * (SiegeCamp.Radius + 7f) - axis * (armored / 2 * 9f);
+                    armored++;
+                }
+                var want = new IntVec3(Mathf.RoundToInt(p.x), 0, Mathf.RoundToInt(p.y)).ClampInsideMap(map);
+                IntVec3 cell = VehicleCompat.FindStandCell(v, map, want, target, taken) ?? want;
+                if (slots != null) slots[v] = cell;
+                if (turrets) siegeHold[v] = cell;
+            }
+            return true;
+        }
+
+        /// <summary>Position d'appui d'un blindé au camp (sa place sur un flanc ; à défaut, là où il est).</summary>
+        public IntVec3 SiegeHoldCell(Pawn v)
+        {
+            if (siegeHold != null && siegeHold.TryGetValue(v, out IntVec3 c)) return c;
+            Map map = lord?.Map;
+            if (map != null && v.Spawned) SiegeStaging(map, lord.ownedPawns, null);   // après un chargement
+            return siegeHold != null && siegeHold.TryGetValue(v, out c) ? c : v.Position;
+        }
+
+        /// <summary>
+        /// Toutes les 60 ticks (toils d'approche et d'assaut) : quand le siège change de phase (appui ↔ assaut),
+        /// les blindés débarqués reçoivent leur nouvelle duty. Rien à faire pour un convoi qui n'accompagne pas un siège.
+        /// </summary>
+        public void TickSiegeSupport(Map map, int now)
+        {
+            if (retreating || map == null || (infantryLord?.LordJob is not LordJob_Siege && siegeHoldWas == null)) return;
+            if (now % 600 == 0) siegeHold?.RemoveAll(kv => Gone(kv.Key));
+            bool hold = SiegeHold();
+            if (siegeHoldWas == hold) return;
+            bool toAssault = siegeHoldWas == true && !hold;
+            siegeHoldWas = hold;
+            int n = 0;
+            foreach (Pawn v in lord.ownedPawns.ToList())
+            {
+                if (!v.Spawned || !unloaded.Contains(v) || !VehicleCompat.HasTurrets(v) || holding.Contains(v)
+                    || VehicleCompat.IsDeployed(v) || VehicleCompat.IsDeploying(v)) continue;
+                v.mindState.duty = DutyFor(v);
+                if (toAssault) v.jobs?.EndCurrentJob(JobCondition.InterruptForced);
+                n++;
+            }
+            if (toAssault) HRLog.Msg($"convoi de siège {faction?.Name} : le siège passe à l'assaut, {n} blindé(s) quittent le camp.");
+            else if (hold) HRLog.Msg($"convoi de siège {faction?.Name} : blindés en appui au camp ({n} déjà débarqué(s)).");
         }
     }
 }

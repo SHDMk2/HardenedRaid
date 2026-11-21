@@ -124,4 +124,113 @@ namespace HardenedRaids
             return false;
         }
     }
+
+    // ---- siege : siège motorisé, passagers à bord (R22)
+    /// <summary>
+    /// Pawn d'un lord transporté dans un véhicule (VF) : non apparu, et son conteneur (VehicleRoleHandler) a pour
+    /// parent un véhicule apparu sur la carte. Sans type VF : <see cref="Thing.SpawnedParentOrMe"/> remonte les
+    /// conteneurs (pawn → VehicleRoleHandler → VehiclePawn) et rend le véhicule.
+    /// </summary>
+    public static class SiegeAboard
+    {
+        public static bool Aboard(Pawn p, Map map) =>
+            p != null && !p.Spawned && p.SpawnedParentOrMe is Pawn v && v != p && v.Map == map && VehicleGate.IsVehicle(v);
+    }
+
+    /// <summary>
+    /// Arrivée d'un siège motorisé. Vanilla (LordToil_Travel.LordToilTick, toutes les 205 ticks) n'envoie
+    /// TravelArrived que si TOUS les membres sont à 10 cases du point et CanReach, qui est faux pour un pawn non
+    /// apparu : tant qu'un passager est à bord, le siège n'arrive jamais. Ici un passager à bord compte comme
+    /// arrivé (il arrive avec le convoi, qui se gare au camp), le test vanilla reste pour les autres, et sans
+    /// aucun pawn apparu rien n'est envoyé (on attend le débarquement ; le délai vanilla de 5000 ticks reste).
+    /// Prefix plutôt que transpiler : il ne prend la main que dans ce seul cas (lord LordJob_Siege, toil
+    /// LordToil_Travel exact, au moins un passager à bord, tick de test) ; partout ailleurs, la méthode vanilla et
+    /// les patchs d'autres mods s'exécutent sans changement, et rien ne dépend de la forme de l'IL.
+    /// </summary>
+    [HarmonyPatch(typeof(LordToil_Travel), nameof(LordToil_Travel.LordToilTick))]
+    public static class Patch_SiegeArrivalAboard
+    {
+        private const float Radius = 10f;   // LordToil_Travel.AllArrivedCheckRadius (non surchargé pour le type exact)
+
+        public static bool Prefix(LordToil_Travel __instance)
+        {
+            if (Find.TickManager.TicksGame % 205 != 0 || !VehicleGate.Active) return true;
+            try
+            {
+                Lord lord = __instance.lord;
+                if (lord?.LordJob is not LordJob_Siege || __instance.GetType() != typeof(LordToil_Travel)) return true;
+                Map map = lord.Map;
+                List<Pawn> pawns = lord.ownedPawns;
+                if (map == null || !pawns.Any(p => SiegeAboard.Aboard(p, map))) return true;
+                IntVec3 dest = __instance.FlagLoc;
+                bool anyOnFoot = false;
+                foreach (Pawn p in pawns)
+                {
+                    if (SiegeAboard.Aboard(p, map)) continue;
+                    if (!p.Spawned || !p.Position.InHorDistOf(dest, Radius) || !p.CanReach(dest, PathEndMode.ClosestTouch, Danger.Deadly)) return false;
+                    anyOnFoot = true;
+                }
+                if (anyOnFoot)
+                {
+                    HRLog.Msg($"siège {lord.faction?.Name} : arrivé au camp {dest} ({pawns.Count(p => SiegeAboard.Aboard(p, map))} passager(s) encore à bord).");
+                    lord.ReceiveMemo("TravelArrived");
+                }
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.WarningOnce("[Hardened Raids] siege arrival: " + e, 0x48525341);
+                return true;
+            }
+        }
+    }
+
+    /// <summary>
+    /// (D6) Un passager à bord tué ou mis à terre (signal PawnLost : vanilla ne signale pas les simples
+    /// blessures d'un pawn non apparu, Pawn_HealthTracker.PostApplyDamage) ne fait basculer ni le voyage en
+    /// défense, ni le camp en assaut. Test « non apparu » seul : à la mort, VF (Patch_Misc.MoveOnDeath) puis
+    /// vanilla (Pawn.Kill) l'ont déjà sorti du véhicule. Un pawn apparu blessé déclenche comme en vanilla.
+    /// Nouvelle classe, à côté de <see cref="Patch_SiegeHoldUnderFire"/> (inchangé).
+    /// </summary>
+    [HarmonyPatch(typeof(Trigger_PawnHarmed), nameof(Trigger_PawnHarmed.ActivateOn))]
+    public static class Patch_SiegeIgnoreHarmAboard
+    {
+        public static bool Prefix(Lord lord, TriggerSignal signal, ref bool __result)
+        {
+            if (lord?.LordJob is not LordJob_Siege || !VehicleGate.Active) return true;
+            Pawn p = signal.Pawn;
+            if (p == null || p.Spawned || !Trigger_PawnHarmed.SignalIsHarm(signal)) return true;
+            __result = false;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Défense d'un siège en voyage (TransitionAction_SetDefendLocalGroup) : vanilla prend la Position d'un
+    /// membre au hasard, passager compris, dont la position est périmée (celle de son apparition au bord, DeSpawn
+    /// ne la remet pas à zéro). Pour un siège : un membre apparu ; à défaut, le véhicule qui le porte.
+    /// </summary>
+    [HarmonyPatch(typeof(TransitionAction_SetDefendLocalGroup), nameof(TransitionAction_SetDefendLocalGroup.DoAction))]
+    public static class Patch_SiegeDefendPointAboard
+    {
+        public static bool Prefix(Transition trans)
+        {
+            try
+            {
+                if (trans?.target is not LordToil_DefendPoint toil || toil.lord?.LordJob is not LordJob_Siege || toil.lord.Map == null) return true;
+                List<Pawn> pawns = toil.lord.ownedPawns;
+                if (pawns.Count == 0 || pawns.All(p => p.Spawned)) return true;
+                Thing at = pawns.Where(p => p.Spawned).RandomElementWithFallback()
+                           ?? pawns.Select(p => p.SpawnedParentOrMe).Where(t => t != null && t.Map == toil.lord.Map).RandomElementWithFallback();
+                if (at == null) return true;
+                toil.SetDefendPoint(at.Position);
+                return false;
+            }
+            catch (Exception e)
+            {
+                Log.WarningOnce("[Hardened Raids] siege defend point: " + e, 0x48525344);
+                return true;
+            }
+        }
+    }
 }
