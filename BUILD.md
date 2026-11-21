@@ -37,7 +37,7 @@ Clean upload copy (no .git/bin/obj): `./make-release.sh [destination]` (default 
 | `SupportTeams.cs` | support teams (forward camp during an assault, only on a clear spot: none at the map edge) + enemy turret resupply (ammo crates next to the gunner, outside the other pieces) |
 | `TurretManning.cs` | enemy turret crews: one dedicated gunner per built manned piece in siege / support camps (vanilla ManClosestTurret duty), AI may man an already loaded turret without ammo on the ground (vanilla / CE job givers), occupant-only bunkers (Fortifications) left out of the catalogs |
 | `Convoy.cs` | enemy convoy: approach, dismount, truck turrets, fire support, retreat and re-boarding (`Defs/HR_AI.xml`) |
-| `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (with `SettlementVehicles.cs`, the only files touching VF types) |
+| `VehicleCompat.cs` | enemy vehicles through Vehicle Framework (with `SettlementVehicles.cs`, the only files touching VF types); chain-explosion guard on `Reactor_Explosive.Hit` for every vehicle (one pending explosion, no self / vehicle-fire re-trigger; setting) |
 | `RaidContext.cs` | one context per raid (stack), safe for nested raids; planned waves and vehicles of the main group |
 | `WaveCaps.cs` | per-wave cap of the vanilla fallback, of human raids with tiers disabled and of non-human raids (mechanoids…) |
 | `InfestationWaves.cs` | infestations: hive cap per wave, extra hives dig in later |

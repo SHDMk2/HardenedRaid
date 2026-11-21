@@ -114,6 +114,9 @@ namespace HardenedRaids
             ["PrepUninstallConfirm"] = "Prepare this game for removing Hardened Raids?\n\nA raid in progress continues as vanilla: infantry and turret crews assault, armed vehicles keep fighting under Vehicle Framework's raid AI, other vehicles leave, immobilized ones are left in place and captives aboard are dropped; groups already retreating leave. Pending waves are cancelled, turret resupply stops and the internal tier marker is removed from every pawn.\n\nThen save, and remove the mod before loading that save.",
             ["PrepUninstallDone"] = "Hardened Raids is ready to be removed: {0} group(s) converted, {1} pending wave(s) cancelled, {2} marker(s) removed. The game is paused.\n\nSave now, then remove the mod before loading the save. Keep playing with the mod and it will start again.",
             ["PrepUninstallErrors"] = "{0} error(s) occurred, see the log.",
+            // ---- explosions
+            ["ExplosionGuard"] = "Vehicles: no chain explosions",
+            ["ExplosionGuardTip"] = "A badly damaged vehicle can still explode when it is hit, but only one explosion at a time, and neither its own explosion nor the fires lit by vehicle explosions can set off its explosive parts again (with Combat Extended, they did at 0 damage, endlessly). Applies to every vehicle, yours included.",
         };
 
         private static readonly Dictionary<string, string> fr = new Dictionary<string, string>
@@ -220,6 +223,9 @@ namespace HardenedRaids
             ["PrepUninstallConfirm"] = "Préparer cette partie au retrait de Hardened Raids ?\n\nUn raid en cours continue en vanilla : infanterie et servants de tourelles à l'assaut, blindés armés sous l'IA de raid de Vehicle Framework, autres véhicules qui repartent, véhicules immobilisés laissés sur place, captifs à bord déposés ; les groupes déjà en retraite partent. Les vagues en attente sont annulées, le ravitaillement des tourelles s'arrête et le marqueur interne de palier est retiré de tous les pawns.\n\nEnsuite, sauvegardez, puis retirez le mod avant de charger cette sauvegarde.",
             ["PrepUninstallDone"] = "Hardened Raids peut être retiré : {0} groupe(s) converti(s), {1} vague(s) en attente annulée(s), {2} marqueur(s) retiré(s). Le jeu est en pause.\n\nSauvegardez maintenant, puis retirez le mod avant de charger la sauvegarde. Si vous continuez à jouer avec le mod, il reprend.",
             ["PrepUninstallErrors"] = "{0} erreur(s), voir le journal.",
+            // ---- explosions
+            ["ExplosionGuard"] = "Véhicules : pas d'explosions en chaîne",
+            ["ExplosionGuardTip"] = "Un véhicule très abîmé peut toujours exploser quand on le touche, mais une seule explosion à la fois, et ni sa propre explosion ni les feux allumés par des explosions de véhicules ne relancent ses pièces explosives (avec Combat Extended, ils le faisaient à 0 dégât, sans fin). S'applique à tous les véhicules, les vôtres compris.",
         };
 
         public static string LanguageName(HRLanguage lang) => lang == HRLanguage.French ? "Français" : "English";

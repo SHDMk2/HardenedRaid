@@ -919,6 +919,7 @@ namespace HardenedRaids
             Patch_EnemyBrakesVF.Apply(harmony);
             Patch_EnemyIdleDismount.Apply(harmony);
             Patch_TurretKeepTarget.Apply(harmony);
+            Patch_ReactorGuard.Apply(harmony);
         }
 
         public static void ExitPrefix2(VehiclePawn vehicle) => ExitPrefix(vehicle);
@@ -1039,6 +1040,52 @@ namespace HardenedRaids
             VehiclePawn v = turret?.vehicle;
             if (v?.Faction == null || v.Faction.IsPlayer) return;
             if (target.Thing is Building_Turret t && t.ThreatDisabled(v)) __result = false;
+        }
+    }
+
+    // ---- explosions : réacteurs explosifs VF relancés sans fin sous CE
+    /// <summary>
+    /// VF <c>Reactor_Explosive.Hit</c> arme une explosion différée (TimedExplosion) à chaque coup sur un composant
+    /// abîmé, sans limite ni test d'instigateur. VF ne l'appelle que si le coup fait des dégâts, mais la compat VF de
+    /// CE (<c>VehicleArmorPatch.DamageComponent</c>) l'appelle à chaque coup, même dévié à 0 dégât : une explosion
+    /// Flame (pénétration 0) et les feux qu'elle allume relancent sans fin les réacteurs du véhicule, qui grossit à
+    /// chaque salve. On n'y touche pas côté CE : le prefix refuse d'armer une explosion
+    ///  (a) quand le véhicule en a déjà une en attente (au plus une à la fois : plus de croissance exponentielle) ;
+    ///  (b) quand le coup vient du véhicule lui-même (sa propre explosion, ou un feu qu'elle a allumé : le feu garde
+    ///      l'instigateur de l'explosion, DamageWorker_Flame → FireUtility.TryStartFireIn → Fire.DoFireDamage) ;
+    ///  (c) quand le coup est un dégât de feu sans arme, venu d'un véhicule (explosion ou feu d'un autre véhicule) ou
+    ///      d'un feu sans instigateur (feu « orphelin », comme ceux que CE attache aux pawns d'une case en feu).
+    /// Les tirs (arme renseignée), les explosions Bomb d'un autre véhicule et les feux allumés par un pawn arment
+    /// toujours normalement. Patch manuel (Vehicles.dll), réglage VehicleExplosionGuard ; rien de sauvegardé
+    /// (VF ne sauvegarde pas sa file d'explosions).
+    /// </summary>
+    public static class Patch_ReactorGuard
+    {
+        public static void Apply(HarmonyLib.Harmony harmony)
+        {
+            var m = HarmonyLib.AccessTools.Method("Vehicles.Reactor_Explosive:Hit");
+            if (m == null) { Log.Warning("[Hardened Raids] Reactor_Explosive.Hit not found: vehicle chain explosions are not guarded."); return; }
+            harmony.Patch(m, prefix: new HarmonyLib.HarmonyMethod(typeof(Patch_ReactorGuard), nameof(Prefix)));
+        }
+
+        public static bool Prefix(VehiclePawn vehicle, ref DamageInfo dinfo)
+        {
+            if (!HRSettings.VehicleExplosionGuard) return true;
+            try
+            {
+                if (vehicle == null) return true;
+                if (vehicle.AttachedExplosives > 0) return false;                          // (a)
+                Thing instigator = dinfo.Instigator;
+                if (instigator == vehicle) return false;                                   // (b)
+                if (dinfo.Def == DamageDefOf.Flame && dinfo.Weapon == null
+                    && (instigator is VehiclePawn || instigator is Fire)) return false;    // (c)
+                return true;
+            }
+            catch (Exception e)
+            {
+                Log.WarningOnce("[Hardened Raids] reactor guard: " + e.Message, 0x52454143);
+                return true;
+            }
         }
     }
 }
